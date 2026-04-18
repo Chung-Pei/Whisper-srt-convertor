@@ -7,11 +7,13 @@
 ![Platform](https://img.shields.io/badge/platform-Browser-orange)
 ![Offline](https://img.shields.io/badge/offline-100%25-success)
 ![No Backend](https://img.shields.io/badge/backend-none-lightgrey)
+![PWA](https://img.shields.io/badge/PWA-supported-blueviolet)
 
 **完全在瀏覽器內運行的 AI 語音辨識字幕工具**  
-基於 OpenAI Whisper + Transformers.js，不需伺服器、不上傳任何資料
+基於 OpenAI Whisper + Transformers.js，不需伺服器、不上傳任何資料  
+支援 PWA 安裝，可釘選至 iPhone / Android 主畫面離線使用
 
-[快速開始](#-快速開始) · [功能特色](#-功能特色) · [支援格式](#-支援格式) · [常見問題](#-常見問題)
+[快速開始](#-快速開始) · [功能特色](#-功能特色) · [支援格式](#-支援格式) · [PWA 安裝](#-pwa-安裝至主畫面) · [常見問題](#-常見問題)
 
 </div>
 
@@ -80,6 +82,13 @@
 
 ### 🔄 翻譯模式
 除原語言轉錄外，支援**翻譯成英文**（Whisper translate task）
+
+### 📱 PWA — 可安裝至主畫面
+本工具支援 Progressive Web App（PWA）規範：
+- **iOS（Safari）**：加入主畫面後以全螢幕 App 模式啟動，無瀏覽器 UI
+- **Android（Chrome）**：支援「安裝應用程式」提示，體驗接近原生 App
+- **Service Worker** 快取靜態資源（HTML / manifest / icons），讓 App 殼層離線可用
+- Whisper 模型本身不由 SW 快取（體積過大），由 App 透過 IndexedDB / 資料夾自行管理
 
 ---
 
@@ -293,10 +302,19 @@ npx serve .
 
 ```
 your-repo/
-└── whisper-srt-v5_3.html    # 完整應用程式（單一 HTML 檔案）
+├── index.html                      # 主應用程式（含 PWA meta tags + SW 註冊）
+├── manifest.json                   # PWA Manifest
+├── sw.js                           # Service Worker（靜態資源快取）
+├── .nojekyll                       # 讓 GitHub Pages 正確 serve 所有檔案
+├── README.md
+└── icons/
+    ├── icon-192.png
+    ├── icon-192-maskable.png
+    ├── icon-512.png
+    └── apple-touch-icon-180x180.png
 ```
 
-本工具為**單一 HTML 檔案**，無任何額外依賴，所有資源均在運行時從 CDN 載入：
+本工具所有資源均在運行時從 CDN 載入：
 - `@huggingface/transformers` v3.5.2（從 jsDelivr CDN 載入）
 - Google Fonts（IBM Plex Mono + Syne）
 
@@ -304,23 +322,86 @@ your-repo/
 
 ## 🌐 部署至 GitHub Pages
 
+### Step 1：Push 檔案至 GitHub
+
 ```bash
-# 1. 建立 repository 並 push 檔案
 git init
-git add whisper-srt-v5_3.html README.md
+git add .
 git commit -m "Initial commit"
 git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
 git push -u origin main
-
-# 2. 在 GitHub 網頁介面：
-# Settings → Pages → Source: Deploy from a branch
-# Branch: main, Folder: / (root) → Save
-
-# 3. 等候約 1-3 分鐘後，訪問：
-# https://YOUR_USERNAME.github.io/YOUR_REPO/whisper-srt-v5_3.html
 ```
 
+### Step 2：啟用 GitHub Pages
+
+1. 進入 Repo → **Settings** → **Pages**
+2. Source 選 `Deploy from a branch`
+3. Branch 選 `main`，資料夾選 `/ (root)`
+4. 儲存後等待部署完成（約 1–2 分鐘）
+5. 訪問：`https://YOUR_USERNAME.github.io/YOUR_REPO/`
+
 > GitHub Pages 提供 HTTPS，完全符合 WebGPU 及 File System Access API 對 Secure Context 的要求。
+
+### Step 3：更新 manifest.json 路徑（重要！）
+
+若 Repo 部署於子路徑（例如 `https://username.github.io/repo-name/`），需修改以下檔案：
+
+**`manifest.json`**
+```json
+{
+  "start_url": "/repo-name/",
+  "scope": "/repo-name/",
+  "icons": [
+    { "src": "/repo-name/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/repo-name/icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
+```
+
+**`index.html`**（head 區段）
+```html
+<link rel="manifest" href="/repo-name/manifest.json">
+<link rel="apple-touch-icon" href="/repo-name/icons/apple-touch-icon-180x180.png">
+```
+
+**`sw.js`**（APP_SHELL 陣列）
+```js
+const APP_SHELL = [
+  '/repo-name/',
+  '/repo-name/index.html',
+  '/repo-name/manifest.json',
+  '/repo-name/icons/icon-192.png',
+  // ...其他圖示
+];
+```
+
+---
+
+## 📱 PWA 安裝至主畫面
+
+### iPhone / iPad（iOS Safari）
+
+1. 用 **Safari** 開啟部署好的 GitHub Pages 網址（需 iOS 16.4+）
+2. 點擊底部工具列的 **分享按鈕**（方框加箭頭圖示）
+3. 選擇「**加入主畫面**」
+4. 確認名稱後點擊「新增」
+5. App 圖示出現於主畫面，之後可離線啟動
+
+> ⚠️ iOS PWA 僅 Safari 支援安裝，Chrome for iOS 無法加入主畫面。
+
+### Android（Chrome）
+
+1. 用 **Chrome** 開啟部署好的 GitHub Pages 網址
+2. 點擊網址列右側選單（⋮）→「**安裝應用程式**」或「加入主畫面」
+3. 確認後 App 圖示出現於桌面
+
+### 更新 App（重要）
+
+每次修改靜態資源後，請遞增 `sw.js` 中的快取版本號，強制用戶端更新：
+
+```js
+const CACHE_VERSION = 'v2'; // 每次更新後遞增
+```
 
 ---
 
@@ -347,6 +428,12 @@ A：（1）改用較小模型如 `tiny` 或 `base`；（2）確認使用 Chrome 
 **Q：輸出的 SRT 時間碼有誤？**  
 A：Whisper 對極短片段（< 1 秒）的時間戳估計可能不精確。可嘗試使用更大的模型，或在影片剪輯軟體中手動調整。
 
+**Q：安裝 PWA 後，App 更新了但畫面還是舊版？**  
+A：請確認開發者已遞增 `sw.js` 中的 `CACHE_VERSION`。您也可以在瀏覽器設定中清除網站快取，強制取得最新版本。
+
+**Q：iPhone 上可以使用 PWA 的推播通知嗎？**  
+A：需要 iOS 16.4+ 且已將 App 安裝至主畫面，才支援 Web Push 通知功能。
+
 ---
 
 ## 📜 授權
@@ -360,7 +447,7 @@ Transformers.js 版權歸屬 [Hugging Face](https://huggingface.co/docs/transfor
 
 <div align="center">
 
-**完全離線 · 零資料外傳 · 無需帳號 · 單一 HTML 檔案**
+**完全離線 · 零資料外傳 · 無需帳號 · PWA 可安裝**
 
 Made with ❤️ using [Transformers.js](https://huggingface.co/docs/transformers.js) + OpenAI Whisper
 
