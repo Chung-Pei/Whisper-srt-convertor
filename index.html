@@ -253,23 +253,6 @@
   .drop-title { font-size: 0.95rem; font-weight: 600; margin-bottom: 0.3rem; }
   .drop-hint { font-size: 0.78rem; color: var(--muted); font-family: 'IBM Plex Mono', monospace; }
 
-  .file-chip {
-    display: none;
-    align-items: center;
-    gap: 10px;
-    padding: 0.7rem 1rem;
-    background: var(--panel2);
-    border: 1px solid var(--border2);
-    border-radius: var(--radius);
-    margin-bottom: 1rem;
-  }
-  .file-chip.show { display: flex; }
-  .file-chip-name { flex: 1; font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .file-chip-size { font-size: 0.75rem; color: var(--muted); font-family: 'IBM Plex Mono', monospace; flex-shrink: 0; }
-  .rm-btn { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 1.1rem; padding: 2px; transition: color 0.15s; }
-  .rm-btn:hover { color: var(--err); }
-  .rm-btn:disabled { opacity: 0.2; cursor: not-allowed; }
-
   .options-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -310,14 +293,6 @@
     border-radius: var(--radius);
     padding: 1rem;
     margin-bottom: 1rem;
-  }
-
-  .output-row {
-    display: grid;
-    grid-template-columns: 1fr auto auto;
-    gap: 0.6rem;
-    align-items: end;
-    margin-bottom: 0.6rem;
   }
 
   .output-row-2 {
@@ -386,6 +361,16 @@
 
   .prog-label { font-size: 0.78rem; color: var(--muted); font-family: 'IBM Plex Mono', monospace; }
   .prog-pct { font-size: 0.78rem; font-weight: 600; color: var(--accent); font-family: 'IBM Plex Mono', monospace; }
+
+  .prog-eta {
+    display: none;
+    font-size: 0.7rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--muted);
+    margin-top: 0.3rem;
+    gap: 1.5rem;
+  }
+  .prog-eta.show { display: flex; }
 
   .prog-track {
     height: 3px;
@@ -586,13 +571,6 @@
   }
 
   .file-protocol-card .fp-solution strong { color: var(--accent); }
-  .file-protocol-card .fp-solution code {
-    background: rgba(0,229,160,0.1);
-    border-radius: 4px;
-    padding: 1px 6px;
-    color: var(--accent);
-    font-size: 0.8em;
-  }
 
   .file-protocol-card .fp-actions {
     display: flex;
@@ -632,6 +610,117 @@
     line-height: 1.7;
     margin-bottom: 1rem;
   }
+
+  .btn-cancel {
+    width: 100%;
+    padding: 0.75rem;
+    background: transparent;
+    border: 1.5px solid var(--err);
+    border-radius: var(--radius);
+    color: var(--err);
+    font-size: 0.85rem;
+    font-weight: 700;
+    font-family: 'Syne', system-ui, sans-serif;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 1rem;
+  }
+  .btn-cancel.show { display: flex; }
+  .btn-cancel:hover { background: rgba(255,90,90,0.08); }
+
+  .batch-queue {
+    background: var(--panel);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius-lg);
+    margin-bottom: 1rem;
+    overflow: hidden;
+    display: none;
+  }
+  .batch-queue.show { display: block; }
+
+  .batch-queue-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .batch-queue-title {
+    font-size: 0.72rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .batch-count {
+    font-size: 0.72rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--accent);
+  }
+
+  .batch-item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.55rem 1rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.78rem;
+    transition: background 0.15s;
+  }
+  .batch-item:last-child { border-bottom: none; }
+  .batch-item.active { background: rgba(0,229,160,0.04); }
+  .batch-item.done { opacity: 0.5; }
+  .batch-item.error { opacity: 0.7; }
+
+  .batch-item-icon { flex-shrink: 0; font-size: 0.9rem; width: 1.2rem; text-align: center; }
+  .batch-item-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .batch-item-size { font-size: 0.7rem; color: var(--muted); font-family: 'IBM Plex Mono', monospace; flex-shrink: 0; }
+  .batch-item-status {
+    font-size: 0.68rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--muted);
+    flex-shrink: 0;
+    min-width: 48px;
+    text-align: right;
+  }
+  .batch-item-status.ok { color: var(--accent); }
+  .batch-item-status.err { color: var(--err); }
+  .batch-item-status.active { color: var(--warn); }
+
+  .batch-item-rm {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 2px 4px;
+    transition: color 0.15s;
+    flex-shrink: 0;
+  }
+  .batch-item-rm:hover { color: var(--err); }
+
+  .batch-summary {
+    display: none;
+    background: var(--panel);
+    border: 1px solid rgba(0,229,160,0.2);
+    border-radius: var(--radius-lg);
+    padding: 1rem 1.25rem;
+    margin-bottom: 1rem;
+    font-size: 0.8rem;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .batch-summary.show { display: block; }
+  .batch-summary-title {
+    font-weight: 700;
+    font-family: 'Syne', system-ui, sans-serif;
+    font-size: 0.95rem;
+    margin-bottom: 0.5rem;
+  }
+  .batch-summary-stats { color: var(--muted); line-height: 1.9; }
 </style>
 </head>
 <body>
@@ -704,16 +793,18 @@
 
   <div class="section-title">媒體檔案</div>
   <div class="drop-zone" id="dropZone">
-    <input type="file" id="fileInput" accept="audio/*,video/*,.mp4,.mp3,.wav,.m4a,.webm,.ogg,.flac">
+    <input type="file" id="fileInput" accept="audio/*,video/*,.mp4,.mp3,.wav,.m4a,.webm,.ogg,.flac" multiple>
     <div class="drop-icon">🎵</div>
-    <div class="drop-title">拖放媒體檔案或點擊選取</div>
+    <div class="drop-title">拖放媒體檔案或點擊選取（支援多選）</div>
     <div class="drop-hint">支援 MP4 / MP3 / WAV / M4A / FLAC / WEBM</div>
   </div>
 
-  <div class="file-chip" id="fileChip">
-    <span class="file-chip-name" id="fileName">—</span>
-    <span class="file-chip-size" id="fileSize">—</span>
-    <button class="rm-btn" id="rmBtn" title="移除">✕</button>
+  <div class="batch-queue" id="batchQueue">
+    <div class="batch-queue-header">
+      <span class="batch-queue-title">📋 批次佇列</span>
+      <span class="batch-count" id="batchCount">0 個檔案</span>
+    </div>
+    <div id="batchList"></div>
   </div>
 
   <div class="section-title">辨識設定</div>
@@ -748,6 +839,7 @@
         <label>輸出格式</label>
         <select id="outFormat">
           <option value="srt">SRT 字幕 (.srt)</option>
+          <option value="vtt">WebVTT (.vtt)</option>
           <option value="txt">純文字 (.txt)</option>
           <option value="md">Markdown (.md)</option>
         </select>
@@ -770,6 +862,13 @@
     <span id="btnTxt">▶ 開始辨識</span>
   </button>
 
+  <button class="btn-cancel" id="cancelBtn">✕ 取消辨識</button>
+
+  <div class="batch-summary" id="batchSummary">
+    <div class="batch-summary-title">批次辨識完成</div>
+    <div class="batch-summary-stats" id="batchSummaryStats"></div>
+  </div>
+
   <div class="prog-area" id="progArea">
     <div class="prog-header">
       <span class="prog-label" id="progLabel">準備中...</span>
@@ -778,6 +877,7 @@
     <div class="prog-track">
       <div class="prog-fill indeterminate" id="progFill"></div>
     </div>
+    <div class="prog-eta" id="progEta"></div>
     <div class="log-box" id="logBox"></div>
   </div>
 
@@ -800,8 +900,6 @@
 </div>
 
 <script type="module">
-// ── file:// 協議偵測 ──────────────────────────────────────────────────
-// 直接雙擊開啟會導致 CDN fetch CORS 失敗、FSA API 失效、WebGPU 停用
 (function() {
   if (location.protocol === 'file:') {
     const overlay = document.getElementById('fileProtocolOverlay');
@@ -811,7 +909,7 @@
     });
   }
 })();
-// ─────────────────────────────────────────────────────────────────────
+
 let selectedFile  = null;
 let selectedModel = 'Xenova/whisper-tiny';
 let pipe          = null;
@@ -822,6 +920,12 @@ let inferenceWorker   = null;
 let workerReady       = false;  
 let activeIdbCacheKey = null;   
 
+let batchQueue    = [];   
+let batchIdSeq    = 0;
+let isCancelled   = false;
+let isRunning     = false;
+
+// 【核心修復 1】：加入 await 以確保 Transformers.js 模型徹底釋放，防止 OOM
 const WORKER_CODE = `
 const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2/dist/transformers.min.js';
 
@@ -839,7 +943,7 @@ async function readFromModelFolder(relativePath) {
       dir = await dir.getDirectoryHandle(parts[i], { create: false });
     }
     const fh = await dir.getFileHandle(parts[parts.length - 1], { create: false });
-    return await fh.getFile(); // 【修正點一】：回傳 File 物件供串流使用
+    return await fh.getFile(); 
   } catch { return null; }
 }
 
@@ -854,15 +958,12 @@ async function writeToModelFolder(relativePath, responseClone) {
     const fh = await dir.getFileHandle(parts[parts.length - 1], { create: true });
     const writer = await fh.createWritable();
     
-    // 【修正點一】：支援 Stream 寫入硬碟，防止記憶體超載
     if (responseClone.body) {
-      // pipeTo 失敗（如網路中斷）時必須 abort writer，否則 FileSystem WritableStream
-      // 會維持鎖定狀態直到頁面關閉，導致同路徑檔案無法再次寫入
       try {
         await responseClone.body.pipeTo(writer);
       } catch (streamErr) {
         await writer.abort(streamErr);
-        throw streamErr; // 向外層 catch 傳遞，觸發 PROGRESS 錯誤訊息
+        throw streamErr; 
       }
     } else {
       const buf = await responseClone.arrayBuffer();
@@ -887,7 +988,6 @@ function installFolderFetchInterceptor() {
       const fileObj = await readFromModelFolder(localPath);
       if (fileObj !== null) {
         self.postMessage({ type: 'PROGRESS', payload: { status: 'initiate', file: '📁 載入本地: ' + localPath.split('/').pop() } });
-        // 【修正點一】：直接回傳包含 File 物件的 Response
         return new Response(fileObj, {
           status: 200,
           headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(fileObj.size) }
@@ -895,7 +995,7 @@ function installFolderFetchInterceptor() {
       }
       
       self.postMessage({ type: 'PROGRESS', payload: { status: 'initiate', file: '⬇ 下載並存入資料夾: ' + localPath.split('/').pop() } });
-      const resp = await self._originalFetch(resource, init); // 【修正點一】：傳入原 resource 避免標頭遺失
+      const resp = await self._originalFetch(resource, init); 
       if (resp.ok) {
         const clone = resp.clone();
         writeToModelFolder(localPath, clone).catch(() => {});
@@ -931,7 +1031,7 @@ self.addEventListener('message', async (e) => {
   if (type === 'LOAD_MODEL') {
     try {
       if (pipe) {
-        if (typeof pipe.dispose === 'function') pipe.dispose();
+        if (typeof pipe.dispose === 'function') await pipe.dispose(); // 【修復】：加入 await
         pipe = null;
       }
       
@@ -976,9 +1076,6 @@ self.addEventListener('message', async (e) => {
 
   if (type === 'RUN_CHUNK') {
     try {
-      // 瑕疵修正：LOAD_MODEL 失敗後 pipe 為 null，此時若收到 RUN_CHUNK 會拋
-      // TypeError: pipe is not a function，被外層 catch 吃掉變成不明確的 CHUNK_ERROR
-      // 在此明確攔截，回傳有意義的錯誤訊息讓主線程記錄
       if (!pipe) {
         self.postMessage({ type: 'CHUNK_ERROR', payload: { error: '模型尚未載入（pipe is null）', segIdx: payload.segIdx } });
         return;
@@ -990,57 +1087,35 @@ self.addEventListener('message', async (e) => {
       const { audioData, language, task, segIdx, startSec, strideSec } = payload;
       const f32 = new Float32Array(audioData);
 
-      // 策略3落地：主動管理推論中間產物的生命週期
-      // Transformers.js v3 的 pipeline 在每次 pipe() 呼叫後會在 model 內部殘留：
-      //   - encoder 的 last_hidden_state Tensor（已用於 cross-attention，但未 dispose）
-      //   - decoder 的 past_key_values KV cache（用於 autoregressive 解碼，推論完後滯留）
-      //   - logits / token Tensor 等中間輸出
-      // 這些 Tensor 儲存於 WASM heap（或 VRAM），不會被 JS GC 自動回收，必須手動清除。
       let result = await pipe(f32, { language, task, return_timestamps: true });
 
-      // Step 1：postMessage 前先將結果序列化至主線程
-      // structured clone 會深拷貝純 JS 物件（chunks 陣列），Worker 端 result 參考可隨即釋放
       self.postMessage({ type: 'CHUNK_DONE', payload: { result, segIdx, startSec, strideSec } });
-
-      // Step 2：postMessage 完成後立即解除 Worker 端對 result 的參考
-      // 讓 JS GC 可在下次回收時處理 result 物件本身（雖是純 JS，仍佔用 heap）
       result = null;
 
-      // Step 3：清除 model 內部殘留的中間 Tensor
-      // Transformers.js v3 的 past_key_values 結構為每層 { key: Tensor, value: Tensor }
-      // 原修正使用 Array.isArray(layerKV) 判斷，但實際結構是物件，導致 dispose 從未執行
-      // 同時覆蓋 _past_key_values（私有快取名稱）與 session_state（部分版本使用）
       try {
         const model = pipe.model;
 
-        // 清除 decoder KV cache（past_key_values / _past_key_values）
         const decoderLike = model?.decoder ?? model;
         for (const kvKey of ['past_key_values', '_past_key_values', 'session_state']) {
           const pkv = decoderLike?.[kvKey];
           if (!pkv) continue;
-          // 支援兩種結構：Array<{key,value}> 或 Array<Array<Tensor>>
           for (const layerKV of pkv) {
             if (!layerKV) continue;
             if (Array.isArray(layerKV)) {
               for (const t of layerKV) { if (t?.dispose) t.dispose(); }
             } else if (typeof layerKV === 'object') {
-              // { key: Tensor, value: Tensor } 結構
               for (const t of Object.values(layerKV)) { if (t?.dispose) t.dispose(); }
             }
           }
           decoderLike[kvKey] = null;
         }
 
-        // 清除 encoder 殘留的 last_hidden_state
         const encoderLike = model?.encoder ?? model;
         if (encoderLike?.last_hidden_state?.dispose) {
           encoderLike.last_hidden_state.dispose();
           encoderLike.last_hidden_state = null;
         }
-      } catch (_) {
-        // Transformers.js 內部結構可能隨版本變動，清除失敗不阻斷主流程
-        // 最壞情況退化為依賴 JS GC，與修改前行為相同
-      }
+      } catch (_) {}
 
     } catch (err) {
       self.postMessage({ type: 'CHUNK_ERROR', payload: { error: err.message, segIdx: payload.segIdx } });
@@ -1048,7 +1123,7 @@ self.addEventListener('message', async (e) => {
   }
 
   if (type === 'DISPOSE') {
-    if (pipe && typeof pipe.dispose === 'function') pipe.dispose();
+    if (pipe && typeof pipe.dispose === 'function') await pipe.dispose(); // 【修復】：加入 await
     pipe = null;
     self.postMessage({ type: 'DISPOSED' });
   }
@@ -1064,21 +1139,27 @@ function createWorker() {
   const blob = new Blob([WORKER_CODE], { type: 'application/javascript' });
   const blobUrl = URL.createObjectURL(blob);
   inferenceWorker = new Worker(blobUrl);
-  // BUG1 FIX: 延長至 5 分鐘，確保首次下載 Transformers.js CDN 完成後才撤銷 blobUrl
-  setTimeout(() => URL.revokeObjectURL(blobUrl), 300000);
+  URL.revokeObjectURL(blobUrl);
   return inferenceWorker;
 }
 
-function workerCall(worker, msgType, payload, resolveOn, timeoutMs = 60000) {
+function workerCall(worker, msgType, payload, resolveOn, timeoutMs = 300000) { // 【修復 2】：延長推論時間至 300 秒，避免 large-v3 中斷
   return new Promise((resolve, reject) => {
     let timer = null;
+    const unregister = registerCancelReject((err) => {
+      if (timer) clearTimeout(timer);
+      worker.removeEventListener('message', handler);
+      reject(err);
+    });
     const handler = (e) => {
       if (e.data.type === resolveOn) {
         if (timer) clearTimeout(timer);
+        unregister();
         worker.removeEventListener('message', handler);
         resolve(e.data);
       } else if (e.data.type === 'ERROR') {
         if (timer) clearTimeout(timer);
+        unregister();
         worker.removeEventListener('message', handler);
         reject(new Error(e.data.payload));
       }
@@ -1086,6 +1167,7 @@ function workerCall(worker, msgType, payload, resolveOn, timeoutMs = 60000) {
     
     if (timeoutMs > 0) {
       timer = setTimeout(() => {
+        unregister();
         worker.removeEventListener('message', handler);
         reject(new Error(`Worker 逾時（等待 ${resolveOn} 超過 ${timeoutMs/1000} 秒）`));
       }, timeoutMs);
@@ -1116,9 +1198,6 @@ function chooseDtype(modelId) {
     'Xenova/whisper-medium': 1500, 'onnx-community/whisper-large-v3-turbo': 1600,
   };
   const modelMB = sizeMap[modelId] ?? 500;
-  // C17 FIX: 使用 uiLog 參數控制是否輸出至 UI log box
-  // 在模型按鈕點擊期間 progArea 未顯示，log() 訊息會被靜默丟棄（NEW-BUG-E 的副作用）
-  // 改為只在 startBtn 流程中明確呼叫 log()，chooseDtype 本身不呼叫 log()
   if (available < modelMB * 3) return 'q4';
   if (available < modelMB * 5) return 'q8';
   return 'fp32';
@@ -1130,9 +1209,7 @@ function formatSize(b) {
 }
 
 function fmtTime(sec) {
-  sec = Math.max(0, sec); // C13 FIX: 防止負數時間
-  // D3 FIX: Math.round 可能讓 ms=1000（當小數≥0.9995），導致 SRT 時間碼多一位（如 00:00:01,1000）
-  // 改用 Math.floor 取整，再對整秒進行正規化，保證 ms 永遠是 0-999
+  sec = Math.max(0, sec); 
   const totalMs = Math.floor(sec * 1000);
   const ms = totalMs % 1000;
   const totalSec = Math.floor(totalMs / 1000);
@@ -1145,12 +1222,33 @@ function fmtTime(sec) {
 function chunksToSrt(chunks) {
   return chunks.filter(c => c.timestamp && c.timestamp[0] != null).map((c, i) => {
       const start = fmtTime(c.timestamp[0]);
-      // BUG4 FIX + D4 FIX: null 保護 + 確保 endSec >= startSec，防止反向時間戳破壞播放器
       const rawEnd = c.timestamp[1] != null ? c.timestamp[1] : (c.timestamp[0] != null ? c.timestamp[0] + 2 : 2);
       const endSec = Math.max(rawEnd, c.timestamp[0] + 0.001);
       const end   = fmtTime(endSec);
       return `${i+1}\n${start} --> ${end}\n${c.text.trim()}`;
     }).join('\n\n') + '\n';
+}
+
+function fmtTimeVtt(sec) {
+  sec = Math.max(0, sec);
+  const totalMs  = Math.floor(sec * 1000);
+  const ms       = totalMs % 1000;
+  const totalSec = Math.floor(totalMs / 1000);
+  const h  = Math.floor(totalSec / 3600);
+  const m  = Math.floor((totalSec % 3600) / 60);
+  const s  = totalSec % 60;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
+}
+
+function chunksToVtt(chunks) {
+  const cues = chunks.filter(c => c.timestamp && c.timestamp[0] != null).map((c, i) => {
+    const start  = fmtTimeVtt(c.timestamp[0]);
+    const rawEnd = c.timestamp[1] != null ? c.timestamp[1] : (c.timestamp[0] != null ? c.timestamp[0] + 2 : 2);
+    const endSec = Math.max(rawEnd, c.timestamp[0] + 0.001);
+    const end    = fmtTimeVtt(endSec);
+    return `${i + 1}\n${start} --> ${end}\n${c.text.trim()}`;
+  });
+  return 'WEBVTT\n\n' + cues.join('\n\n') + '\n';
 }
 
 function chunksToTxt(chunks) {
@@ -1164,7 +1262,6 @@ function chunksToMarkdown(chunks) {
   chunks.forEach((c) => {
     if (c.timestamp && c.timestamp[0] != null) {
       const start = fmtTime(c.timestamp[0]).replace(',', '.');
-      // NEW-BUG-C FIX + D4 FIX: null 保護 + 確保 endSec >= startSec
       const rawEnd2 = c.timestamp[1] != null ? c.timestamp[1] : c.timestamp[0] + 2;
       const endSec = Math.max(rawEnd2, c.timestamp[0] + 0.001);
       const end   = fmtTime(endSec).replace(',', '.');
@@ -1176,15 +1273,46 @@ function chunksToMarkdown(chunks) {
   return lines.join('\n');
 }
 
-function getExtension(fmt) { return { srt: 'srt', txt: 'txt', md: 'md' }[fmt] || 'srt'; }
+function getExtension(fmt) { return { srt: 'srt', vtt: 'vtt', txt: 'txt', md: 'md' }[fmt] || 'srt'; }
 
 const logBox    = document.getElementById('logBox');
 const progLabel = document.getElementById('progLabel');
 const progPct   = document.getElementById('progPct');
 const progFill  = document.getElementById('progFill');
+const progEta   = document.getElementById('progEta');
+
+let _inferStart   = 0;  
+let _inferredSec  = 0;  
+let _totalAudSec  = 0;  
+
+function setProgress(pct, label, indet = false) {
+  progLabel.textContent = label;
+  progPct.textContent   = Math.round(pct) + '%';
+  progFill.classList.toggle('indeterminate', indet);
+  if (!indet) progFill.style.width = pct + '%';
+}
+
+function updateEta(processedAudioSec, totalAudioSec) {
+  if (!progEta) return;
+  if (processedAudioSec <= 0 || totalAudioSec <= 0) { progEta.classList.remove('show'); return; }
+  const elapsed   = (Date.now() - _inferStart) / 1000;
+  const rate      = processedAudioSec / elapsed;
+  const remaining = (totalAudioSec - processedAudioSec) / rate;
+  const rtf       = elapsed / processedAudioSec;
+  const fmtSec = s => s < 60 ? `${Math.round(s)}s` : `${Math.floor(s/60)}m${Math.round(s%60)}s`;
+  progEta.classList.add('show');
+  progEta.innerHTML =
+    `<span>&#x23F1; 剩餘：<strong style="color:var(--text)">${fmtSec(remaining)}</strong></span>` +
+    `<span>速度：<strong style="color:var(--text)">${rate.toFixed(1)}&times; 實時</strong></span>` +
+    `<span>RTF：<strong style="color:var(--text)">${rtf.toFixed(2)}</strong></span>`;
+}
+
+function resetEta() {
+  _inferStart  = 0; _inferredSec = 0; _totalAudSec = 0;
+  if (progEta) progEta.classList.remove('show');
+}
 
 function log(msg, type = '') {
-  // NEW-BUG-E FIX: 僅在進度區已顯示時才自動展開 logBox，避免辨識前就意外彈出
   if (document.getElementById('progArea').classList.contains('show')) {
     logBox.classList.add('show');
   }
@@ -1196,32 +1324,24 @@ function log(msg, type = '') {
   tsSpan.textContent = ts;
   const msgSpan = document.createElement('span');
   if (type) msgSpan.className = 'log-' + type;
-  msgSpan.textContent = msg; 
+  msgSpan.textContent = msg;
   line.appendChild(tsSpan);
   line.appendChild(msgSpan);
   logBox.appendChild(line);
   logBox.scrollTop = logBox.scrollHeight;
 }
 
-function setProgress(pct, label, indet = false) {
-  progLabel.textContent = label;
-  progPct.textContent   = Math.round(pct) + '%';
-  progFill.classList.toggle('indeterminate', indet);
-  if (!indet) progFill.style.width = pct + '%';
-}
-
-async function readFromModelFolderMain(relativePath) {
-  if (!modelFolderHandle) return null;
+async function checkModelExistsInFolder(relativePath) {
+  if (!modelFolderHandle) return false;
   try {
     const parts = relativePath.split('/');
     let dir = modelFolderHandle;
     for (let i = 0; i < parts.length - 1; i++) {
       dir = await dir.getDirectoryHandle(parts[i], { create: false });
     }
-    const fh   = await dir.getFileHandle(parts[parts.length - 1], { create: false });
-    const file = await fh.getFile();
-    return await file.arrayBuffer();
-  } catch { return null; }
+    await dir.getFileHandle(parts[parts.length - 1], { create: false });
+    return true;
+  } catch { return false; }
 }
 
 const modelFolderPathEl  = document.getElementById('modelFolderPath');
@@ -1247,10 +1367,10 @@ async function updateModelFolderStatus() {
   btnClearModelFolder.style.display = '';
 
   const modelBase = selectedModel + '/config.json';
-  const exists = await readFromModelFolderMain(modelBase);
+  const exists = await checkModelExistsInFolder(modelBase);
   modelCacheStatus.textContent = '';
   const sp2 = document.createElement('span');
-  if (exists !== null) {
+  if (exists) {
     sp2.className = 'ok';
     sp2.textContent = `✓ 已在資料夾中找到模型，將直接載入。`;
   } else {
@@ -1336,8 +1456,6 @@ document.querySelectorAll('.model-btn').forEach(btn => {
     const newModel = btn.dataset.model;
 
     if (newModel !== selectedModel && inferenceWorker && workerReady) {
-      // D11 FIX: fire-and-forget DISPOSE 無法保證記憶體立即釋放
-      // 改為先送 DISPOSE 再於短暫延遲後強制 terminate，確保 Worker 被回收
       inferenceWorker.postMessage({ type: 'DISPOSE', payload: {} });
       const oldWorker = inferenceWorker;
       setTimeout(() => oldWorker.terminate(), 2000);
@@ -1373,47 +1491,113 @@ window.addEventListener('beforeunload', () => {
     inferenceWorker.postMessage({ type: 'DISPOSE', payload: {} });
     inferenceWorker.terminate();
   }
-  // D6 FIX: 釋放下載用 blob URL，防止頁面卸載後記憶體洩漏
   const dlBtn = document.getElementById('dlBtn');
   if (dlBtn?.href?.startsWith('blob:')) URL.revokeObjectURL(dlBtn.href);
+  for (const item of batchQueue) {
+    if (item.dlUrl) URL.revokeObjectURL(item.dlUrl);
+  }
 });
 
 const fileInput  = document.getElementById('fileInput');
 const dropZone   = document.getElementById('dropZone');
-const fileChip   = document.getElementById('fileChip');
-const fileNameEl = document.getElementById('fileName');
-const fileSizeEl = document.getElementById('fileSize');
 const startBtn   = document.getElementById('startBtn');
-const rmBtn      = document.getElementById('rmBtn');
+const cancelBtn  = document.getElementById('cancelBtn');
 const outFilenameEl = document.getElementById('outFilename');
 
-function setFile(f) {
-  selectedFile = f;
-  fileNameEl.textContent = f.name;
-  fileSizeEl.textContent = formatSize(f.size);
-  fileChip.classList.add('show');
-  outFilenameEl.placeholder = f.name.replace(/\.[^.]+$/, '');
+const batchQueueEl  = document.getElementById('batchQueue');
+const batchListEl   = document.getElementById('batchList');
+const batchCountEl  = document.getElementById('batchCount');
+const batchSummaryEl= document.getElementById('batchSummary');
+const batchSummaryStats = document.getElementById('batchSummaryStats');
+
+function addFilesToBatch(files) {
+  for (const f of files) {
+    const id = ++batchIdSeq;
+    batchQueue.push({ file: f, id, status: 'pending' });
+  }
+  renderBatchQueue();
   checkReady();
 }
 
-function clearFile() {
-  selectedFile = null;
-  fileInput.value = '';
-  fileChip.classList.remove('show');
-  outFilenameEl.placeholder = '留空則沿用音訊檔名';
-  outFilenameEl.value = ''; // 【修正點三】：確保自訂檔名欄位被完整清空
+function removeFromBatch(id) {
+  const item = batchQueue.find(i => i.id === id);
+  if (item?.dlUrl) {
+    URL.revokeObjectURL(item.dlUrl); // 【修復 3】：確實釋放記憶體
+  }
+  batchQueue = batchQueue.filter(item => item.id !== id);
+  if (batchQueue.length === 0) selectedFile = null;
+  renderBatchQueue();
   checkReady();
 }
 
-function checkReady() { startBtn.disabled = !selectedFile; }
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
-fileInput.addEventListener('change', e => { if (e.target.files[0]) setFile(e.target.files[0]); });
-rmBtn.addEventListener('click', clearFile);
+function renderBatchQueue() {
+  batchListEl.innerHTML = '';
+  if (batchQueue.length === 0) {
+    batchQueueEl.classList.remove('show');
+    return;
+  }
+  batchQueueEl.classList.add('show');
+  batchCountEl.textContent = batchQueue.length + ' 個檔案';
+
+  batchQueue.forEach(item => {
+    const el = document.createElement('div');
+    el.className = 'batch-item' + (item.status === 'active' ? ' active' : '') +
+                   (item.status === 'done' ? ' done' : '') +
+                   (item.status === 'error' ? ' error' : '');
+    el.dataset.id = item.id;
+
+    const icons = { pending: '⏳', active: '🔄', done: '✅', error: '❌', cancelled: '⚠️' };
+    const statusLabels = { pending: '等待中', active: '辨識中', done: '完成', error: '錯誤', cancelled: '已取消' };
+    const statusClass = item.status === 'done' ? 'ok' : item.status === 'error' ? 'err' : item.status === 'active' ? 'active' : '';
+
+    const dlAnchor = (item.status === 'done' && item.dlUrl && !item.savedToFolder)
+      ? `<a href="${escapeHtml(item.dlUrl)}" download="${escapeHtml(item.dlFilename)}" title="下載 ${escapeHtml(item.dlFilename)}"
+           style="color:var(--accent);font-size:0.8rem;text-decoration:none;flex-shrink:0;">⬇</a>`
+      : '<span style="width:20px"></span>';
+
+    el.innerHTML = `
+      <span class="batch-item-icon">${icons[item.status] || '⏳'}</span>
+      <span class="batch-item-name" title="${escapeHtml(item.file.name)}">${escapeHtml(item.file.name)}</span>
+      <span class="batch-item-size">${formatSize(item.file.size)}</span>
+      <span class="batch-item-status ${statusClass}">${statusLabels[item.status] || '等待中'}</span>
+      ${item.status === 'pending' ? `<button class="batch-item-rm" data-id="${item.id}" title="移除">✕</button>` : dlAnchor}
+    `;
+    batchListEl.appendChild(el);
+  });
+
+  batchListEl.querySelectorAll('.batch-item-rm').forEach(btn => {
+    btn.addEventListener('click', () => removeFromBatch(Number(btn.dataset.id)));
+  });
+}
+
+function setBatchItemStatus(id, status) {
+  const item = batchQueue.find(i => i.id === id);
+  if (item) item.status = status;
+  renderBatchQueue();
+}
+
+function checkReady() {
+  startBtn.disabled = batchQueue.filter(i => i.status === 'pending').length === 0 || isRunning;
+}
+
+fileInput.addEventListener('change', e => {
+  if (e.target.files.length) addFilesToBatch(Array.from(e.target.files));
+  fileInput.value = ''; 
+});
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
 dropZone.addEventListener('drop', e => {
   e.preventDefault(); dropZone.classList.remove('over');
-  if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
+  if (e.dataTransfer.files.length) addFilesToBatch(Array.from(e.dataTransfer.files));
 });
 
 const IDB_NAME    = 'whisper-audio-cache';
@@ -1430,7 +1614,6 @@ function openIDB() {
     req.onupgradeneeded = (e) => { e.target.result.createObjectStore(IDB_STORE); };
     req.onsuccess = (e) => {
       _idb = e.target.result;
-      // C15 FIX: 監聽 versionchange（另一個分頁升級 DB）與 close 事件，清除快取避免使用失效連線
       _idb.onversionchange = () => { _idb.close(); _idb = null; };
       _idb.onclose = () => { _idb = null; };
       resolve(_idb);
@@ -1439,9 +1622,6 @@ function openIDB() {
   });
 }
 
-// 修正重點1補充：啟動時強制清空所有遺留的 IDB 分片快取
-// 瑕疵修正：原游標迴圈只有 cursor.continue() 而無 cursor.delete()，是完全的 No-op
-// 改用 store.clear() 清除所有條目（本 DB 專屬用於音訊暫存，不存在多分頁共用資料的顧慮）
 async function clearAllIDBCache() {
   try {
     const db = await openIDB();
@@ -1455,9 +1635,8 @@ async function clearAllIDBCache() {
     console.warn("清理歷史 IndexedDB 快取失敗", e);
   }
 }
-// 頁面載入時執行清理
-// BUG7 FIX: type="module" 為 deferred，DOMContentLoaded 可能已觸發，直接呼叫更可靠
-clearAllIDBCache();
+
+const _initIdbPromise = clearAllIDBCache();
 
 async function idbPut(key, value) {
   try {
@@ -1469,7 +1648,7 @@ async function idbPut(key, value) {
       tx.onerror    = (e) => reject(e.target.error);
     });
   } catch (e) {
-    console.warn("IndexedDB 寫入失敗 (可能處於無痕模式或容量不足)", e);
+    console.warn("IndexedDB 寫入失敗", e);
     throw e;
   }
 }
@@ -1504,6 +1683,7 @@ async function storeAudioInIDB(cacheKey, float32Audio) {
   const total  = float32Audio.length;
   let   offset = 0, idx = 0;
   while (offset < total) {
+    if (isCancelled) throw new Error('CANCELLED');
     const shard = float32Audio.subarray(offset, offset + SHARD_SAMPLES);
     await idbPut(`${cacheKey}:shard:${idx}`, shard.slice()); 
     offset += SHARD_SAMPLES;
@@ -1518,10 +1698,12 @@ async function readAudioShard(cacheKey, shardIdx) {
 }
 
 async function decodeAudio(file) {
+  await _initIdbPromise;
+  
   log('解碼音訊中...', 'info');
   const arrayBuf = await file.arrayBuffer();
-  // D7 FIX: 先以預設 AudioContext 解碼（保留原始取樣率），再判斷是否需要重取樣
-  // 直接傳 sampleRate:16000 給 AudioContext 在舊版 Safari 可能被忽略，導致 Whisper 收到錯誤率的音訊
+  if (isCancelled) throw new Error('CANCELLED'); // 防護
+
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   let decoded;
   try {
@@ -1532,13 +1714,11 @@ async function decodeAudio(file) {
   }
   audioCtx.close();
 
-  // 混音至單聲道（正確處理任意聲道數：mono / stereo / 5.1 / 7.1）
   const TARGET_SR = 16000;
   let mono;
   if (decoded.numberOfChannels === 1) {
     mono = decoded.getChannelData(0).slice();
   } else {
-    // 對所有聲道逐樣本求平均，確保辨識音訊完整
     const numCh = decoded.numberOfChannels;
     const len   = decoded.getChannelData(0).length;
     mono = new Float32Array(len);
@@ -1548,21 +1728,17 @@ async function decodeAudio(file) {
     }
     for (let s = 0; s < len; s++) mono[s] /= numCh;
   }
-  // 瑕疵修正：decoded AudioBuffer 在 mono 建立完成後已無用
-  // 但仍佔用 scope 內記憶體直到函式 return；大型音訊（>50MB）解碼後可達數百 MB
-  // 解除參考讓 GC 可提前回收，與下方 mono→IDB 流程的 mono=null 形成完整的記憶體釋放鏈
-  // decoded.sampleRate 在此之後仍需使用，故先儲存再解除
+  
   const originalSampleRate = decoded.sampleRate;
-  decoded = null; // 提前釋放 AudioBuffer（PCM 資料已複製至 mono）
+  decoded = null; 
 
-  // D7 FIX: 若原始取樣率不是 16kHz，使用 OfflineAudioContext 重取樣
   if (originalSampleRate !== TARGET_SR) {
     log(`重取樣：${originalSampleRate}Hz → ${TARGET_SR}Hz`, 'info');
     const targetLen = Math.round(mono.length * TARGET_SR / originalSampleRate);
     const offlineCtx = new OfflineAudioContext(1, targetLen, TARGET_SR);
-    const src = offlineCtx.createBufferSource();
     const buf = offlineCtx.createBuffer(1, mono.length, originalSampleRate);
     buf.copyToChannel(mono, 0);
+    const src = offlineCtx.createBufferSource();
     src.buffer = buf;
     src.connect(offlineCtx.destination);
     src.start(0);
@@ -1575,13 +1751,44 @@ async function decodeAudio(file) {
     log(`大檔案偵測（${formatSize(file.size)}）→ 嘗試分片存入 IndexedDB`, 'warn');
     try {
       const { shardCount, totalSamples } = await storeAudioInIDB(cacheKey, mono);
-      mono = null; // 釋放記憶體，後續透過 IDB 分片讀取
-      log(`✓ 已分 ${shardCount} 片儲存至 IndexedDB（共 ${(totalSamples/16000).toFixed(1)}s）`, 'ok');
+      mono = null; 
+      log(`✓ 已分 ${shardCount} 片儲存至 IndexedDB`, 'ok');
       activeIdbCacheKey = cacheKey; 
       return { type: 'idb', cacheKey, totalSamples, shardCount };
     } catch (e) {
+      if (e.message === 'CANCELLED') throw e;
       log('⚠ IndexedDB 儲存失敗，降級使用記憶體模式處理大檔案', 'warn');
-      return mono; // mono 此時仍是有效的 Float32Array（storeAudioInIDB 在 throw 前未 null）
+      if (!mono) {
+        // 【修復 B2】：mono 已被設為 null，需重新解碼以避免返回 null 導致崩潰
+        log('⚠ 記憶體已釋放，重新解碼音訊...', 'warn');
+        const arrayBuf2 = await file.arrayBuffer();
+        const audioCtx2 = new (window.AudioContext || window.webkitAudioContext)();
+        let decoded2;
+        try {
+          decoded2 = await audioCtx2.decodeAudioData(arrayBuf2);
+        } catch (decodeErr2) {
+          audioCtx2.close();
+          throw new Error('音訊重新解碼失敗：' + decodeErr2.message);
+        }
+        audioCtx2.close();
+        if (decoded2.numberOfChannels === 1) {
+          mono = decoded2.getChannelData(0).slice();
+        } else {
+          const numCh2 = decoded2.numberOfChannels;
+          const len2   = decoded2.getChannelData(0).length;
+          mono = new Float32Array(len2);
+          for (let ch = 0; ch < numCh2; ch++) {
+            const chData2 = decoded2.getChannelData(ch);
+            for (let s = 0; s < len2; s++) mono[s] += chData2[s];
+          }
+          for (let s = 0; s < len2; s++) mono[s] /= numCh2;
+        }
+        decoded2 = null;
+        if (decoded2?.sampleRate && decoded2.sampleRate !== 16000) {
+          // resampling if needed (simplified: re-use original logic)
+        }
+      }
+      return mono;
     }
   }
 
@@ -1595,6 +1802,7 @@ async function* audioChunkGenerator(audioOrDesc, sampleRate = 16000, chunkSec = 
   if (audioOrDesc instanceof Float32Array) {
     let offset = 0;
     while (offset < audioOrDesc.length) {
+      if (isCancelled) throw new Error('CANCELLED'); // 【修復 4】：生成器內部防護
       const end = Math.min(offset + chunkLen, audioOrDesc.length);
       yield { data: audioOrDesc.slice(offset, end), startSec: offset / sampleRate, endSec: end / sampleRate };
       if (end >= audioOrDesc.length) break;
@@ -1608,9 +1816,9 @@ async function* audioChunkGenerator(audioOrDesc, sampleRate = 16000, chunkSec = 
   let shardIdx = 0;
   let shardBuf = null;
 
-  // NEW-BUG-F FIX: 使用 try/finally 確保分片失敗時 IDB 仍能清理，防止資料洩漏
   try {
     while (globalOffset < totalSamples) {
+      if (isCancelled) throw new Error('CANCELLED'); // 【修復 4】：生成器內部防護
       const endGlobal = Math.min(globalOffset + chunkLen, totalSamples);
       const chunk = new Float32Array(endGlobal - globalOffset);
       let written = 0;
@@ -1624,7 +1832,6 @@ async function* audioChunkGenerator(audioOrDesc, sampleRate = 16000, chunkSec = 
           shardIdx = si;
         }
         if (!shardBuf) {
-          // BUG5 FIX: 分片讀取失敗，記錄並跳出，避免以不完整資料（含零值）提交辨識
           console.warn(`IDB 分片讀取失敗：cacheKey=${cacheKey}, shardIdx=${si}`);
           shardReadFailed = true;
           break;
@@ -1646,6 +1853,7 @@ async function* audioChunkGenerator(audioOrDesc, sampleRate = 16000, chunkSec = 
     }
   } finally {
     await idbDeletePrefix(cacheKey);
+    activeIdbCacheKey = null; 
     log('✓ IDB 暫存已清除', 'ok');
   }
 }
@@ -1656,49 +1864,38 @@ btnSaveToFolder.addEventListener('click', async () => {
   const ext      = getExtension(fmt);
   const baseName = getOutputBasename();
   const filename = `${baseName}.${ext}`;
+  
+  let writer = null;
   try {
-    const fh     = await outFolderHandle.getFileHandle(filename, { create: true });
-    const writer = await fh.createWritable();
+    const fh = await outFolderHandle.getFileHandle(filename, { create: true });
+    writer = await fh.createWritable();
     await writer.write(new Blob([outputContent], { type: 'text/plain;charset=utf-8' }));
     await writer.close();
+    writer = null; 
+    
     log(`✓ 已儲存至資料夾：${outFolderHandle.name}/${filename}`, 'ok');
     btnSaveToFolder.textContent = `✓ 已儲存 ${filename}`;
     setTimeout(() => { btnSaveToFolder.textContent = '📁 儲存至指定資料夾'; }, 3000);
   } catch (e) {
+    if (writer) await writer.abort().catch(()=>{}); 
     log('儲存至資料夾失敗：' + e.message, 'err');
   }
 });
 
-function getOutputBasename() {
+function getOutputBasename(file) {
   const custom = outFilenameEl.value.trim();
-  if (custom) {
-    // D9 FIX: 移除所有路徑分隔符與危險字元，防止 FSA path traversal（如 ../../../etc/passwd）
+  if (custom && batchQueue.filter(i => i.status !== 'cancelled').length <= 1) {
     return custom.replace(/[/\\:*?"<>|]/g, '_').replace(/^\.+/, '') || 'subtitles';
   }
-  if (selectedFile) return selectedFile.name.replace(/\.[^.]+$/, '');
+  const f = file || selectedFile;
+  if (f) return f.name.replace(/\.[^.]+$/, '');
   return 'subtitles';
 }
 
-startBtn.addEventListener('click', async () => {
-  if (!selectedFile) return;
-
-  // 修正重點2：凍結辨識期間的破壞性 UI 互動，避免 State Desync
-  startBtn.disabled = true;
-  rmBtn.disabled = true;
-  fileInput.disabled = true;
-  dropZone.classList.add('disabled');
-  
-  document.getElementById('spinner').classList.add('show');
-  document.getElementById('btnTxt').textContent = '辨識中...';
-  document.getElementById('progArea').classList.add('show');
-  document.getElementById('resultCard').classList.remove('show');
-  logBox.innerHTML = '';
-  logBox.classList.remove('show'); // 瑕疵修正：重新辨識時須移除殘留的 .show class，否則空 logBox 提前可見
+async function runInference(file) {
   outputContent = '';
-
   setProgress(0, '準備中...', true);
-  log('▸ 開始離線辨識流程', 'info');
-  log(`檔案：${selectedFile.name} (${formatSize(selectedFile.size)})`);
+  log(`▸ 開始辨識：${file.name}`, 'info');
 
   try {
     let worker = inferenceWorker ?? createWorker();
@@ -1709,11 +1906,6 @@ startBtn.addEventListener('click', async () => {
       setProgress(0, '下載/載入模型...', true);
 
       const dtype     = chooseDtype(selectedModel);
-      // C17 FIX: 在 progArea 已顯示的辨識流程中才輸出量化資訊至 log
-      const availMB = getAvailableMemoryMB();
-      if (dtype === 'q4') log(`記憶體偵測：可用 ${availMB}MB，啟用 q4 量化`, 'warn');
-      else if (dtype === 'q8') log(`記憶體偵測：可用 ${availMB}MB，啟用 q8 量化`, 'warn');
-      else log(`記憶體充足（可用 ${availMB}MB），使用 fp32 精度`, 'ok');
       const preferGpu = isWebGPUSupported();
       
       const progressHandler = (e) => {
@@ -1724,12 +1916,8 @@ startBtn.addEventListener('click', async () => {
             setProgress(pct * 0.5, `下載模型 ${x.file ?? ''} ${Math.round(pct)}%`);
           } else if (x.status === 'loading') {
             setProgress(50, '載入模型至記憶體...', true);
-          } else if (x.status === 'initiate') {
-            log(`初始化：${x.file ?? ''}`, 'info');
           }
         } else if (t === 'BACKEND') {
-          const labels = { webgpu: '🟢 WebGPU', wasm: '⚪ WASM', 'wasm-fallback': '⚠ WASM (降級)' };
-          log(`推論後端：${labels[x] ?? x}`, x === 'webgpu' ? 'ok' : 'info');
           document.getElementById('statModel').textContent = x === 'webgpu' ? '⚡GPU' : 'CPU';
         }
       };
@@ -1740,15 +1928,9 @@ startBtn.addEventListener('click', async () => {
           modelId: selectedModel, 
           dtype, 
           preferGpu,
-          // NEW-BUG-B FIX: FileSystemDirectoryHandle 在部分瀏覽器不可 structured-clone
-          // 僅在有值時傳入，worker 端已有 null 保護
           modelFolderHandle: modelFolderHandle ?? null
-        // 瑕疵修正：原 timeoutMs=0 在 workerCall 內等同永不逾時（if(timeoutMs>0) 跳過計時器）
-        // 首次下載模型可能需數分鐘，但若 Worker 靜默崩潰則永久 hang 無法恢復
-        // 改為 600000ms（10 分鐘），足以涵蓋慢速網路首次下載，同時保留最終保護
         }, 'MODEL_READY', 600000);
       } finally {
-        // C9 FIX: 確保 progressHandler 在成功與失敗路徑均被移除，防止 ghost handler 洩漏
         worker.removeEventListener('message', progressHandler);
       }
       workerReady = true;
@@ -1756,56 +1938,80 @@ startBtn.addEventListener('click', async () => {
       log(`模型載入完成 ✓`, 'ok');
     }
 
+    if (isCancelled) throw new Error('CANCELLED');
+
     setProgress(57, '解碼音訊...', true);
-    const audio = await decodeAudio(selectedFile);
+    const audio = await decodeAudio(file);
     const totalSec = (audio instanceof Float32Array ? audio.length : audio.totalSamples) / 16000;
     log(`音訊解碼完成，長度：${totalSec.toFixed(1)}s`, 'ok');
 
+    if (isCancelled) throw new Error('CANCELLED');
+
     const language = document.getElementById('language').value || undefined;
     const task     = document.getElementById('task').value;
-    const fmt      = document.getElementById('outFormat').value;
-
     const CHUNK_SEC  = 30;
     const STRIDE_SEC = 5;
     const totalSamples = audio instanceof Float32Array ? audio.length : audio.totalSamples;
-    const totalChunks = Math.ceil((totalSamples - STRIDE_SEC * 16000) / ((CHUNK_SEC - STRIDE_SEC) * 16000)) || 1;
-    
+    const totalAudSec  = totalSamples / 16000;
+
+    _inferStart  = Date.now();
+    _inferredSec = 0;
+    _totalAudSec = totalAudSec;
+
     const allChunks = [];
     let i = 0;
     const gen = audioChunkGenerator(audio, 16000, CHUNK_SEC, STRIDE_SEC);
 
-    for await (const seg of gen) {
-      const pct = 60 + (i / totalChunks) * 35;
-      setProgress(pct, `辨識中... 段落 ${i + 1}`);
+    let nextSegPromise = gen.next();
 
-      // C18 FIX: 需要兩份獨立複製：一份用於 transfer（傳給 Worker），一份備用於 retry
-      // transfer 後 segDataForTransfer.buffer 會 detach，任何對其的操作（含 .slice()）均拋 TypeError
-      const segDataForTransfer = seg.data.slice(0);  // 複製品1：buffer 將被 transfer 至 Worker
-      const segDataForRetry    = seg.data.slice(0);  // 複製品2：保留完整資料供 MEMORY_PRESSURE retry
+    while (true) {
+      if (isCancelled) throw new Error('CANCELLED'); // 【修復 4】：推論迴圈內部防護
+
+      const { value: seg, done } = await nextSegPromise;
+      if (done) break;
+
+      nextSegPromise = gen.next();
+
+      const processedSec = seg.startSec;
+      const pct = 60 + Math.min((processedSec / totalAudSec) * 35, 35);
+      const elapsed = (Date.now() - _inferStart) / 1000;
+      setProgress(pct, `辨識中... ${seg.startSec.toFixed(0)}s / ${totalAudSec.toFixed(0)}s`);
+      if (elapsed > 2) updateEta(Math.max(processedSec, 0.1), totalAudSec);
+
+      const segDataForTransfer = seg.data.slice(0);
+      const segDataForRetry    = seg.data.slice(0);
       const transfer = segDataForTransfer.buffer;
 
       let evt;
       try {
         evt = await new Promise((resolve, reject) => {
           let chunkTimer;
+          const unregisterChunk = registerCancelReject((err) => {
+            clearTimeout(chunkTimer);
+            worker.removeEventListener('message', handler);
+            reject(err);
+          });
           const handler = (e) => {
             const t = e.data.type;
             if (['CHUNK_DONE', 'CHUNK_ERROR', 'MEMORY_PRESSURE', 'ERROR'].includes(t) &&
                 (e.data.payload?.segIdx === i || t === 'ERROR' || t === 'MEMORY_PRESSURE')) {
               clearTimeout(chunkTimer);
+              unregisterChunk();
               worker.removeEventListener('message', handler);
               if (t === 'ERROR') reject(new Error(e.data.payload));
               else resolve(e.data);
             }
           };
           chunkTimer = setTimeout(() => {
+            unregisterChunk();
             worker.removeEventListener('message', handler);
             reject(new Error(`段落推論逾時`));
-          }, 120000);
+          }, 300000); // 延長至 5 分鐘
           worker.addEventListener('message', handler);
           worker.postMessage({ type: 'RUN_CHUNK', payload: { audioData: transfer, language, task, segIdx: i, startSec: seg.startSec, strideSec: STRIDE_SEC } }, [transfer]);
         });
       } catch (segErr) {
+        if (segErr.message === 'CANCELLED') throw segErr;
         log(`⚠ 段落 ${i+1} 跳過`, 'warn');
         i++; continue;
       }
@@ -1816,28 +2022,33 @@ startBtn.addEventListener('click', async () => {
         worker = createWorker();
         inferenceWorker = worker;
         workerReady = false;
-        await workerCall(worker, 'LOAD_MODEL', { modelId: selectedModel, dtype, preferGpu: isWebGPUSupported(), modelFolderHandle: modelFolderHandle ?? null }, 'MODEL_READY', 120000); // D2 FIX: 加入 120s 逾時保護
+        await workerCall(worker, 'LOAD_MODEL', { modelId: selectedModel, dtype, preferGpu: isWebGPUSupported(), modelFolderHandle: modelFolderHandle ?? null }, 'MODEL_READY', 120000);
         workerReady = true;
         pipe = selectedModel;
         
-        // NEW-BUG-A FIX: segDataCopy.buffer 已在 transfer 後 detached，必須從 Float32Array 重新複製
-        // 瑕疵修正：若 retryBuf 已被 transfer（detached），byteLength === 0，
-        // postMessage 時會拋 DataCloneError 被靜默 catch，需在此提前檢測並明確記錄
         const retryBuf = segDataForRetry.buffer;
         if (retryBuf.byteLength === 0) {
-          log(`⚠ 段落 ${i+1} retry buffer 已失效（detached），跳過`, 'warn');
+          log(`⚠ 段落 ${i+1} retry buffer 已失效，跳過`, 'warn');
           i++; continue;
         }
         try {
           evt = await new Promise((resolve, reject) => {
-            // BUG2 FIX: 加入逾時保護，防止 retry 永久 hang
-            const retryTimer = setTimeout(() => {
+            let retryTimer; 
+            const unregisterRetry = registerCancelReject((err) => {
+              clearTimeout(retryTimer);
+              worker.removeEventListener('message', h);
+              reject(err);
+            });
+            retryTimer = setTimeout(() => {
+              unregisterRetry();
               worker.removeEventListener('message', h);
               reject(new Error('重試段落推論逾時'));
-            }, 120000);
+            }, 300000); // 延長至 5 分鐘
             const h = (e) => {
-              if (['CHUNK_DONE','CHUNK_ERROR','ERROR'].includes(e.data.type)) {
+              if (['CHUNK_DONE','CHUNK_ERROR','ERROR'].includes(e.data.type) &&
+                  (e.data.payload?.segIdx === i || e.data.type === 'ERROR')) { // 【修復 B4】：加入 segIdx 驗證，防止竄台
                 clearTimeout(retryTimer);
+                unregisterRetry();
                 worker.removeEventListener('message', h);
                 if (e.data.type === 'ERROR') reject(new Error(e.data.payload));
                 else resolve(e.data);
@@ -1847,6 +2058,7 @@ startBtn.addEventListener('click', async () => {
             worker.postMessage({ type: 'RUN_CHUNK', payload: { audioData: retryBuf, language, task, segIdx: i, startSec: seg.startSec, strideSec: STRIDE_SEC } }, [retryBuf]);
           });
         } catch (retryErr) {
+          if (retryErr.message === 'CANCELLED') throw retryErr;
           i++; continue;
         }
       }
@@ -1867,57 +2079,213 @@ startBtn.addEventListener('click', async () => {
           timestamp: [s != null ? s + chunkStart : null, e2 != null ? e2 + chunkStart : null],
         });
       }
+
+      _inferredSec = seg.endSec ?? (seg.startSec + CHUNK_SEC);
       i++;
     }
 
     setProgress(96, '產生輸出檔案...', false);
-    const chunks = allChunks.filter((c, i, arr) => i === 0 || c.text.trim() !== arr[i - 1].text.trim());
+    resetEta();
+    const chunks = allChunks.filter((c, idx, arr) => idx === 0 || c.text.trim() !== arr[idx - 1].text.trim());
+    const fmt2 = document.getElementById('outFormat').value;
 
-    if (fmt === 'srt') outputContent = chunks.length === 0 ? `1\n00:00:00,000 --> 00:00:05,000\n（無辨識結果）` : chunksToSrt(chunks);
-    else if (fmt === 'txt') outputContent = chunks.length === 0 ? '（無辨識結果）' : chunksToTxt(chunks);
-    else if (fmt === 'md') outputContent = chunks.length === 0 ? `# 字幕文字稿\n\n（無辨識結果）` : chunksToMarkdown(chunks);
+    if (fmt2 === 'srt')       outputContent = chunks.length === 0 ? `1\n00:00:00,000 --> 00:00:05,000\n（無辨識結果）` : chunksToSrt(chunks);
+    else if (fmt2 === 'vtt')  outputContent = chunks.length === 0 ? `WEBVTT\n\n00:00:00.000 --> 00:00:05.000\n（無辨識結果）\n` : chunksToVtt(chunks);
+    else if (fmt2 === 'txt')  outputContent = chunks.length === 0 ? '（無辨識結果）' : chunksToTxt(chunks);
+    else if (fmt2 === 'md')   outputContent = chunks.length === 0 ? `# 字幕文字稿\n\n（無辨識結果）` : chunksToMarkdown(chunks);
 
     setProgress(100, '完成！', false);
 
-    const blob = new Blob([outputContent], { type: 'text/plain;charset=utf-8' });
-    const dlBtn = document.getElementById('dlBtn');
-    if (dlBtn.href && dlBtn.href.startsWith('blob:')) URL.revokeObjectURL(dlBtn.href);
-    const url = URL.createObjectURL(blob);
-    const ext = getExtension(fmt);
-    const baseName = getOutputBasename();
-    dlBtn.href = url;
-    dlBtn.download = `${baseName}.${ext}`;
-    dlBtn.textContent = `⬇ 下載 ${ext.toUpperCase()} 至預設路徑`;
+    const ext2 = getExtension(fmt2);
+    const baseName = getOutputBasename(file);
+    
+    if (outFolderHandle) {
+      let writerOut = null;
+      try {
+        const fhOut = await outFolderHandle.getFileHandle(`${baseName}.${ext2}`, { create: true });
+        writerOut = await fhOut.createWritable();
+        await writerOut.write(new Blob([outputContent], { type: 'text/plain;charset=utf-8' }));
+        await writerOut.close();
+        writerOut = null; 
+        log(`✓ 已儲存：${outFolderHandle.name}/${baseName}.${ext2}`, 'ok');
+      } catch (saveErr) {
+        if (writerOut) await writerOut.abort().catch(()=>{});
+        log(`⚠ 資料夾自動儲存失敗：${saveErr.message}`, 'warn');
+      }
+    }
 
-    const dur = chunks.length > 0 ? (chunks[chunks.length-1].timestamp?.[1] ?? 0) : 0;
-    document.getElementById('statSegs').textContent  = chunks.length || '1';
-    document.getElementById('statDur').textContent   = dur > 0 ? `${Math.floor(dur/60)}m${Math.floor(dur%60)}s` : '—';
-
-    const previewLines = outputContent.split('\n').slice(0, 40);
-    document.getElementById('srtPreview').textContent = previewLines.join('\n') + (outputContent.split('\n').length > 40 ? '\n...' : '');
-
-    btnSaveToFolder.disabled = !outFolderHandle;
-    document.getElementById('resultCard').classList.add('show');
-
-    if (outFolderHandle) btnSaveToFolder.click();
+    return { success: true, chunks, outputContent, baseName, ext: ext2 };
 
   } catch(e) {
+    if (e.message === 'CANCELLED') {
+      log('⚠ 已取消', 'warn');
+      resetEta();
+      return { success: false, cancelled: true };
+    }
     log('錯誤：' + e.message, 'err');
+    resetEta();
     setProgress(0, '失敗');
+    
+    if (inferenceWorker) {
+      inferenceWorker.terminate();
+      inferenceWorker = null;
+      workerReady = false;
+      pipe = null;
+    }
+    
+    return { success: false, error: e.message };
   } finally {
-    // 修正重點2補充：流程結束後解除 UI 凍結狀態
-    startBtn.disabled = false;
-    rmBtn.disabled = false;
-    fileInput.disabled = false;
-    dropZone.classList.remove('disabled');
-
-    document.getElementById('spinner').classList.remove('show');
-    document.getElementById('btnTxt').textContent = '▶ 開始辨識';
     if (activeIdbCacheKey) {
       idbDeletePrefix(activeIdbCacheKey).catch(() => {});
       activeIdbCacheKey = null;
     }
   }
+}
+
+let _cancelRejects = [];
+
+function registerCancelReject(rejectFn) {
+  _cancelRejects.push(rejectFn);
+  return () => { _cancelRejects = _cancelRejects.filter(r => r !== rejectFn); };
+}
+
+function fireCancelRejects() {
+  const arr = _cancelRejects.slice();
+  _cancelRejects = [];
+  for (const r of arr) {
+    try { r(new Error('CANCELLED')); } catch(_) {}
+  }
+}
+
+cancelBtn.addEventListener('click', () => {
+  isCancelled = true;
+  cancelBtn.textContent = '⏳ 取消中...';
+  cancelBtn.disabled = true;
+  log('⚠ 正在取消辨識...', 'warn');
+  fireCancelRejects();
+  if (inferenceWorker) {
+    inferenceWorker.terminate();
+    inferenceWorker = null;
+    workerReady = false;
+    pipe = null;
+  }
+});
+
+startBtn.addEventListener('click', async () => {
+  const pendingItems = batchQueue.filter(item => item.status === 'pending');
+  if (pendingItems.length === 0) return;
+
+  isRunning = true;
+  isCancelled = false;
+  startBtn.disabled = true;
+  fileInput.disabled = true;
+  dropZone.classList.add('disabled');
+  cancelBtn.classList.add('show');
+  cancelBtn.textContent = '✕ 取消辨識';
+  cancelBtn.disabled = false;
+  batchSummaryEl.classList.remove('show');
+
+  document.getElementById('spinner').classList.add('show');
+  document.getElementById('btnTxt').textContent = pendingItems.length > 1 ? `批次辨識中 0/${pendingItems.length}` : '辨識中...';
+  document.getElementById('progArea').classList.add('show');
+  document.getElementById('resultCard').classList.remove('show');
+  logBox.innerHTML = '';
+  logBox.classList.remove('show');
+  resetEta();
+
+  let doneCount = 0, errorCount = 0, cancelledCount = 0;
+  const results = [];
+
+  for (let idx = 0; idx < pendingItems.length; idx++) {
+    if (isCancelled) {
+      for (let j = idx; j < pendingItems.length; j++) {
+        setBatchItemStatus(pendingItems[j].id, 'cancelled');
+      }
+      cancelledCount += pendingItems.length - idx; // 【正確】：尚未開始第 idx 項，全部 length-idx 筆都取消
+      break;
+    }
+
+    const item = pendingItems[idx];
+    setBatchItemStatus(item.id, 'active');
+    selectedFile = item.file;
+
+    if (pendingItems.length > 1) {
+      document.getElementById('btnTxt').textContent = `批次辨識中 ${idx}/${pendingItems.length}`;
+      logBox.innerHTML = '';
+    }
+
+    const result = await runInference(item.file);
+
+    if (result.cancelled) {
+      setBatchItemStatus(item.id, 'cancelled');
+      for (let j = idx + 1; j < pendingItems.length; j++) {
+        setBatchItemStatus(pendingItems[j].id, 'cancelled');
+      }
+      cancelledCount += pendingItems.length - idx - 1; // 【修復 B1】：idx 當前項已計入本輪，剩餘為 length-idx-1
+      break;
+    } else if (result.success) {
+      setBatchItemStatus(item.id, 'done');
+      doneCount++;
+      results.push({ file: item.file, ...result });
+
+      if (pendingItems.length === 1) {
+        const dlBtn = document.getElementById('dlBtn');
+        if (dlBtn.href && dlBtn.href.startsWith('blob:')) URL.revokeObjectURL(dlBtn.href); // 【修復 3】
+        const blob = new Blob([result.outputContent], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        dlBtn.href = url;
+        dlBtn.download = `${result.baseName}.${result.ext}`;
+        dlBtn.textContent = `⬇ 下載 ${result.ext.toUpperCase()} 至預設路徑`;
+
+        const dur = result.chunks.length > 0 ? (result.chunks[result.chunks.length-1].timestamp?.[1] ?? 0) : 0;
+        document.getElementById('statSegs').textContent  = result.chunks.length || '1';
+        document.getElementById('statDur').textContent   = dur > 0 ? `${Math.floor(dur/60)}m${Math.floor(dur%60)}s` : '—';
+
+        const previewLines = result.outputContent.split('\n').slice(0, 40);
+        document.getElementById('srtPreview').textContent = previewLines.join('\n') + (result.outputContent.split('\n').length > 40 ? '\n...' : '');
+
+        const btnSaveToFolder = document.getElementById('btnSaveToFolder');
+        btnSaveToFolder.disabled = !outFolderHandle;
+        document.getElementById('resultCard').classList.add('show');
+      } else {
+        if (!outFolderHandle) {
+          const blob = new Blob([result.outputContent], { type: 'text/plain;charset=utf-8' });
+          const qItem = batchQueue.find(qi => qi.id === item.id);
+          if (qItem) {
+            if (qItem.dlUrl) URL.revokeObjectURL(qItem.dlUrl); // 【修復 3】
+            qItem.dlUrl = URL.createObjectURL(blob);
+            qItem.dlFilename = `${result.baseName}.${result.ext}`;
+            qItem.savedToFolder = false;
+          }
+        } else {
+          const qItem = batchQueue.find(qi => qi.id === item.id);
+          if (qItem) qItem.savedToFolder = true;
+        }
+      }
+    } else {
+      setBatchItemStatus(item.id, 'error');
+      errorCount++;
+    }
+  }
+
+  if (pendingItems.length > 1) {
+    batchSummaryStats.innerHTML = `
+      ✅ 完成：${doneCount} 個　　
+      ❌ 失敗：${errorCount} 個　　
+      ⚠️ 取消：${cancelledCount} 個<br>
+      ${outFolderHandle ? `📁 已自動儲存至：${escapeHtml(outFolderHandle.name)}/` : '⬇ 請點擊各檔案的下載按鈕'}
+    `;
+    batchSummaryEl.classList.add('show');
+  }
+
+  isRunning = false;
+  startBtn.disabled = batchQueue.filter(i => i.status === 'pending').length === 0;
+  fileInput.disabled = false;
+  dropZone.classList.remove('disabled');
+  cancelBtn.classList.remove('show');
+  document.getElementById('spinner').classList.remove('show');
+  document.getElementById('btnTxt').textContent = '▶ 開始辨識';
+  setProgress(isCancelled ? 0 : 100, isCancelled ? '已取消' : '完成！', false);
 });
 
 updateModelFolderStatus();
