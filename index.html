@@ -1,0 +1,1926 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Whisper 離線字幕產生器</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@400;600;800&display=swap');
+  
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0a;
+    --panel: #111113;
+    --panel2: #18181c;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.13);
+    --text: #e8e4df;
+    --muted: #6b6760;
+    --accent: #00e5a0;
+    --accent2: #00b87a;
+    --warn: #f5c542;
+    --err: #ff5a5a;
+    --radius: 8px;
+    --radius-lg: 14px;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', system-ui, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 3rem 1.5rem 5rem;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.5;
+  }
+
+  .wrap {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 660px;
+  }
+
+  header { margin-bottom: 3rem; }
+
+  .badge-offline {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(0,229,160,0.1);
+    border: 1px solid rgba(0,229,160,0.25);
+    border-radius: 99px;
+    padding: 4px 12px;
+    font-size: 0.7rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 1.2rem;
+  }
+
+  .badge-offline::before {
+    content: '';
+    width: 6px; height: 6px;
+    background: var(--accent);
+    border-radius: 50%;
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  h1 {
+    font-size: 2.4rem;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 1.1;
+    color: var(--text);
+    margin-bottom: 0.6rem;
+  }
+
+  h1 span { color: var(--accent); }
+
+  .subtitle {
+    font-size: 0.85rem;
+    color: var(--muted);
+    font-family: 'IBM Plex Mono', monospace;
+    line-height: 1.6;
+  }
+
+  .section-title {
+    font-size: 0.68rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 0.6rem;
+    margin-top: 1.4rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .model-strip {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .model-btn {
+    background: var(--panel);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--muted);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    padding: 6px 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .model-btn:hover { border-color: var(--accent); color: var(--text); }
+  .model-btn.active {
+    background: rgba(0,229,160,0.08);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .model-btn-turbo { border-color: rgba(245,197,66,0.4); color: #f5c542; }
+  .model-btn-turbo:hover, .model-btn-turbo.active {
+    border-color: #f5c542 !important;
+    background: rgba(245,197,66,0.08) !important;
+    color: #f5c542 !important;
+  }
+
+  .info-box {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 0.9rem 1rem;
+    font-size: 0.78rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--muted);
+    line-height: 1.7;
+    margin-bottom: 1rem;
+  }
+  .info-box strong { color: var(--accent); }
+
+  .model-folder-panel {
+    background: var(--panel);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .folder-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.6rem;
+  }
+
+  .folder-path-display {
+    flex: 1;
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.45rem 0.75rem;
+    font-size: 0.75rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  .folder-path-display.selected { color: var(--accent); border-color: rgba(0,229,160,0.3); }
+
+  .btn-sm {
+    background: var(--panel2);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    padding: 0.45rem 0.85rem;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .btn-sm:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm.danger:hover { border-color: var(--err); color: var(--err); }
+
+  .model-cache-status {
+    font-size: 0.72rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  .model-cache-status .ok { color: var(--accent); }
+  .model-cache-status .warn { color: var(--warn); }
+  .model-cache-status .info { color: #7aa2f7; }
+
+  .drop-zone {
+    border: 1.5px dashed var(--border2);
+    border-radius: var(--radius-lg);
+    padding: 3rem 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    background: transparent;
+    margin-bottom: 1rem;
+  }
+
+  .drop-zone:hover, .drop-zone.over {
+    border-color: var(--accent);
+    background: rgba(0,229,160,0.03);
+  }
+
+  .drop-zone.disabled {
+    opacity: 0.5;
+    pointer-events: none;
+    border-color: var(--border2);
+  }
+
+  .drop-zone input[type="file"] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+
+  .drop-icon { font-size: 2.5rem; margin-bottom: 0.75rem; opacity: 0.6; }
+  .drop-title { font-size: 0.95rem; font-weight: 600; margin-bottom: 0.3rem; }
+  .drop-hint { font-size: 0.78rem; color: var(--muted); font-family: 'IBM Plex Mono', monospace; }
+
+  .file-chip {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    padding: 0.7rem 1rem;
+    background: var(--panel2);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    margin-bottom: 1rem;
+  }
+  .file-chip.show { display: flex; }
+  .file-chip-name { flex: 1; font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .file-chip-size { font-size: 0.75rem; color: var(--muted); font-family: 'IBM Plex Mono', monospace; flex-shrink: 0; }
+  .rm-btn { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 1.1rem; padding: 2px; transition: color 0.15s; }
+  .rm-btn:hover { color: var(--err); }
+  .rm-btn:disabled { opacity: 0.2; cursor: not-allowed; }
+
+  .options-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .opt-group label {
+    display: block;
+    font-size: 0.7rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 0.4rem;
+  }
+
+  select, input[type="text"] {
+    width: 100%;
+    background: var(--panel);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.85rem;
+    font-family: 'Syne', system-ui, sans-serif;
+    padding: 0.55rem 0.8rem;
+    outline: none;
+    cursor: pointer;
+  }
+
+  input[type="text"] { cursor: text; }
+  select:focus, input[type="text"]:focus { border-color: var(--accent); }
+  select option { background: #111113; }
+
+  .output-panel {
+    background: var(--panel);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .output-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 0.6rem;
+    align-items: end;
+    margin-bottom: 0.6rem;
+  }
+
+  .output-row-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.6rem;
+  }
+
+  .out-path-display {
+    grid-column: 1 / -1;
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.4rem 0.75rem;
+    font-size: 0.72rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .out-path-display.selected { color: var(--accent); border-color: rgba(0,229,160,0.2); }
+  .out-path-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+
+  .btn-main {
+    width: 100%;
+    padding: 0.9rem;
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 0.9rem;
+    font-weight: 800;
+    font-family: 'Syne', system-ui, sans-serif;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 0.02em;
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    margin-bottom: 1rem;
+  }
+  .btn-main:hover:not(:disabled) { background: #1afdb8; transform: translateY(-1px); }
+  .btn-main:active:not(:disabled) { transform: none; }
+  .btn-main:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .spinner {
+    display: none;
+    width: 16px; height: 16px;
+    border: 2px solid rgba(0,0,0,0.2);
+    border-top-color: #000;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  .spinner.show { display: block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .prog-area { display: none; margin-bottom: 1rem; }
+  .prog-area.show { display: block; }
+
+  .prog-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 0.4rem;
+  }
+
+  .prog-label { font-size: 0.78rem; color: var(--muted); font-family: 'IBM Plex Mono', monospace; }
+  .prog-pct { font-size: 0.78rem; font-weight: 600; color: var(--accent); font-family: 'IBM Plex Mono', monospace; }
+
+  .prog-track {
+    height: 3px;
+    background: var(--panel2);
+    border-radius: 99px;
+    overflow: hidden;
+    margin-bottom: 0.75rem;
+  }
+
+  .prog-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 99px;
+    width: 0%;
+    transition: width 0.5s ease;
+  }
+
+  .prog-fill.indeterminate {
+    width: 35% !important;
+    animation: sweep 1.5s ease-in-out infinite;
+  }
+
+  @keyframes sweep {
+    0% { transform: translateX(-200%); }
+    100% { transform: translateX(380%); }
+  }
+
+  .log-box {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.9rem 1rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--muted);
+    line-height: 1.8;
+    max-height: 180px;
+    overflow-y: auto;
+    display: none;
+  }
+  .log-box.show { display: block; }
+  .log-line { display: flex; gap: 8px; }
+  .log-ts { color: #333; flex-shrink: 0; }
+  .log-ok { color: var(--accent); }
+  .log-warn { color: var(--warn); }
+  .log-err { color: var(--err); }
+  .log-info { color: #7aa2f7; }
+
+  .result-card {
+    display: none;
+    background: var(--panel);
+    border: 1px solid rgba(0,229,160,0.2);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+  }
+  .result-card.show { display: block; }
+
+  .result-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 1rem;
+  }
+  .result-title { font-size: 1rem; font-weight: 700; }
+  .result-ok { font-size: 0.75rem; font-family: 'IBM Plex Mono', monospace; color: var(--accent); }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .stat {
+    background: var(--panel2);
+    border-radius: var(--radius);
+    padding: 0.75rem;
+    text-align: center;
+  }
+  .stat-val { font-size: 1.3rem; font-weight: 800; color: var(--accent); }
+  .stat-lbl { font-size: 0.68rem; font-family: 'IBM Plex Mono', monospace; color: var(--muted); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .preview-box {
+    background: var(--panel2);
+    border-radius: var(--radius);
+    padding: 1rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--muted);
+    line-height: 1.8;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    margin-bottom: 1rem;
+  }
+
+  .result-actions { display: flex; gap: 0.6rem; }
+
+  .btn-dl {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    flex: 1;
+    padding: 0.8rem;
+    background: transparent;
+    border: 1.5px solid var(--accent);
+    border-radius: var(--radius);
+    color: var(--accent);
+    font-size: 0.875rem;
+    font-weight: 700;
+    font-family: 'Syne', system-ui, sans-serif;
+    text-decoration: none;
+    transition: all 0.2s;
+    cursor: pointer;
+  }
+  .btn-dl:hover { background: rgba(0,229,160,0.08); transform: translateY(-1px); }
+
+  .btn-save-folder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    flex: 1;
+    padding: 0.8rem;
+    background: rgba(0,229,160,0.08);
+    border: 1.5px solid var(--accent);
+    border-radius: var(--radius);
+    color: var(--accent);
+    font-size: 0.875rem;
+    font-weight: 700;
+    font-family: 'Syne', system-ui, sans-serif;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-save-folder:hover { background: rgba(0,229,160,0.15); transform: translateY(-1px); }
+  .btn-save-folder:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+
+  .file-protocol-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.82);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+  }
+
+  .file-protocol-card {
+    background: #16100a;
+    border: 1.5px solid rgba(255,90,90,0.5);
+    border-top: 3px solid #ff5a5a;
+    border-radius: var(--radius-lg);
+    padding: 2rem 2rem 1.75rem;
+    max-width: 540px;
+    width: 100%;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .file-protocol-card h2 {
+    font-family: 'Syne', system-ui, sans-serif;
+    font-size: 1.05rem;
+    font-weight: 800;
+    color: #ff5a5a;
+    margin-bottom: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .file-protocol-card p {
+    font-size: 0.78rem;
+    color: var(--muted);
+    line-height: 1.8;
+    margin-bottom: 1rem;
+  }
+
+  .file-protocol-card p strong { color: var(--text); }
+
+  .file-protocol-card .fp-affected {
+    background: rgba(255,90,90,0.06);
+    border: 1px solid rgba(255,90,90,0.2);
+    border-radius: var(--radius);
+    padding: 0.7rem 0.9rem;
+    font-size: 0.74rem;
+    color: #ff8a8a;
+    line-height: 1.9;
+    margin-bottom: 1.1rem;
+  }
+
+  .file-protocol-card .fp-solution {
+    background: rgba(0,229,160,0.05);
+    border: 1px solid rgba(0,229,160,0.2);
+    border-radius: var(--radius);
+    padding: 0.8rem 0.9rem;
+    font-size: 0.76rem;
+    line-height: 1.9;
+    margin-bottom: 1.1rem;
+  }
+
+  .file-protocol-card .fp-solution strong { color: var(--accent); }
+  .file-protocol-card .fp-solution code {
+    background: rgba(0,229,160,0.1);
+    border-radius: 4px;
+    padding: 1px 6px;
+    color: var(--accent);
+    font-size: 0.8em;
+  }
+
+  .file-protocol-card .fp-actions {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .fp-btn-dismiss {
+    background: none;
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--muted);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    padding: 0.45rem 0.9rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .fp-btn-dismiss:hover { border-color: var(--err); color: var(--err); }
+
+  .fp-note {
+    font-size: 0.68rem;
+    color: #444;
+    margin-left: auto;
+  }
+
+  .warn-box {
+    background: rgba(245,197,66,0.07);
+    border: 1px solid rgba(245,197,66,0.3);
+    border-left: 3px solid #f5c542;
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    font-size: 0.78rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: #f5c542;
+    line-height: 1.7;
+    margin-bottom: 1rem;
+  }
+</style>
+</head>
+<body>
+
+<div class="file-protocol-overlay" id="fileProtocolOverlay" style="display:none;">
+  <div class="file-protocol-card">
+    <h2>⚠ 請勿直接雙擊開啟此檔案</h2>
+    <p>目前網址為 <strong>file://</strong>，瀏覽器的安全性限制會導致以下功能<strong>無法使用</strong>：</p>
+    <div class="fp-affected">
+      ✕ &nbsp;模型無法載入（CDN fetch 被 CORS 阻擋）<br>
+      ✕ &nbsp;資料夾選取失效（File System Access API 需 Secure Context）<br>
+      ✕ &nbsp;WebGPU 加速停用（需 Secure Context）<br>
+      ⚠ &nbsp;IndexedDB 快取會因路徑變動而遺失
+    </div>
+    <div class="fp-solution">
+      <strong>✓ 建議方式：用本機 HTTP 伺服器開啟</strong><br><br>
+      方法 A — 在此 HTML 所在目錄開啟終端機，執行：<br>
+      <code>python -m http.server 8080</code><br>
+      再用瀏覽器開啟 <code>http://localhost:8080</code><br><br>
+      方法 B — VS Code 安裝 <strong>Live Server</strong> 擴充功能，右鍵 → Open with Live Server<br><br>
+      方法 C — Node.js 環境：<code>npx serve .</code>
+    </div>
+    <div class="fp-actions">
+      <button class="fp-btn-dismiss" id="fpDismiss">我了解風險，仍要繼續</button>
+      <span class="fp-note">部分功能將無法運作</span>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+  <header>
+    <div class="badge-offline">完全離線 · 無資料外傳</div>
+    <h1>Whisper <span>離線</span><br>字幕產生器</h1>
+    <p class="subtitle">// 音訊在瀏覽器內處理 · 不呼叫任何 API · 不傳送任何資料</p>
+  </header>
+
+  <div class="section-title">語音模型</div>
+  <div class="model-strip">
+    <button class="model-btn active" data-model="Xenova/whisper-tiny" data-warn="">tiny (~75MB)</button>
+    <button class="model-btn" data-model="Xenova/whisper-base" data-warn="">base (~145MB)</button>
+    <button class="model-btn" data-model="Xenova/whisper-small" data-warn="">small (~460MB)</button>
+    <button class="model-btn" data-model="Xenova/whisper-medium" data-warn="">medium (~1.5GB)</button>
+    <button class="model-btn model-btn-turbo" data-model="onnx-community/whisper-large-v3-turbo" data-warn="ram">large-v3-turbo (~1.6GB) ⚡</button>
+  </div>
+
+  <div class="info-box" id="infoBox">
+    <strong>▸ tiny (~75MB)</strong> — 首次使用需下載模型，之後快取於本地。音訊僅在本機處理，不傳送任何資料。
+  </div>
+
+  <div class="warn-box" id="ramWarn" style="display:none;">
+    ⚠ <strong>記憶體警告</strong><br>
+    large-v3-turbo 模型約 1.6GB，瀏覽器執行時需 <strong>3–4GB 可用 RAM</strong>。<br>
+    建議：64-bit Chrome／Edge、系統記憶體 ≥ 8GB。記憶體不足會導致頁面崩潰。<br>
+    <span style="opacity:0.8;">ℹ 本工具已啟用<strong>自動量化</strong>（q8/q4），記憶體不足時自動壓縮模型至約 400–800MB。</span>
+  </div>
+
+  <div class="model-folder-panel">
+    <div style="font-size:0.72rem;font-family:'IBM Plex Mono',monospace;color:var(--muted);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:0.7rem;">
+      📁 模型快取資料夾 <span style="color:#444;font-size:0.68rem;">— 優先讀取，若找不到再使用 IndexedDB</span>
+    </div>
+    <div class="folder-row">
+      <div class="folder-path-display" id="modelFolderPath">未指定（使用瀏覽器 IndexedDB）</div>
+      <button class="btn-sm" id="btnPickModelFolder">選擇資料夾</button>
+      <button class="btn-sm danger" id="btnClearModelFolder" style="display:none;">清除</button>
+    </div>
+    <div class="model-cache-status" id="modelCacheStatus">
+      <span class="info">ℹ 指定資料夾後，模型會優先下載至該資料夾，重新整理後亦可直接讀取，避免 IndexedDB 被清除。</span>
+    </div>
+  </div>
+
+  <div class="section-title">媒體檔案</div>
+  <div class="drop-zone" id="dropZone">
+    <input type="file" id="fileInput" accept="audio/*,video/*,.mp4,.mp3,.wav,.m4a,.webm,.ogg,.flac">
+    <div class="drop-icon">🎵</div>
+    <div class="drop-title">拖放媒體檔案或點擊選取</div>
+    <div class="drop-hint">支援 MP4 / MP3 / WAV / M4A / FLAC / WEBM</div>
+  </div>
+
+  <div class="file-chip" id="fileChip">
+    <span class="file-chip-name" id="fileName">—</span>
+    <span class="file-chip-size" id="fileSize">—</span>
+    <button class="rm-btn" id="rmBtn" title="移除">✕</button>
+  </div>
+
+  <div class="section-title">辨識設定</div>
+  <div class="options-row">
+    <div class="opt-group">
+      <label>辨識語言</label>
+      <select id="language">
+        <option value="zh">中文（繁/簡）</option>
+        <option value="en">English</option>
+        <option value="ja">日本語</option>
+        <option value="ko">한국어</option>
+        <option value="">自動偵測</option>
+      </select>
+    </div>
+    <div class="opt-group">
+      <label>任務</label>
+      <select id="task">
+        <option value="transcribe">轉錄（原語言）</option>
+        <option value="translate">翻譯成英文</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="section-title">輸出設定</div>
+  <div class="output-panel">
+    <div class="output-row-2" style="margin-bottom:0.75rem;">
+      <div class="opt-group">
+        <label>輸出檔名（不含副檔名）</label>
+        <input type="text" id="outFilename" placeholder="留空則沿用音訊檔名" />
+      </div>
+      <div class="opt-group">
+        <label>輸出格式</label>
+        <select id="outFormat">
+          <option value="srt">SRT 字幕 (.srt)</option>
+          <option value="txt">純文字 (.txt)</option>
+          <option value="md">Markdown (.md)</option>
+        </select>
+      </div>
+    </div>
+    <div class="folder-row" style="margin-bottom:0.5rem;">
+      <div class="folder-path-display out-path-display" id="outFolderPath">
+        <span class="out-path-dot" style="opacity:0.4;"></span>
+        未指定（瀏覽器預設下載路徑）
+      </div>
+    </div>
+    <div style="display:flex;gap:0.6rem;">
+      <button class="btn-sm" id="btnPickOutFolder">📂 選擇輸出資料夾</button>
+      <button class="btn-sm danger" id="btnClearOutFolder" style="display:none;">清除資料夾</button>
+    </div>
+  </div>
+
+  <button class="btn-main" id="startBtn" disabled>
+    <div class="spinner" id="spinner"></div>
+    <span id="btnTxt">▶ 開始辨識</span>
+  </button>
+
+  <div class="prog-area" id="progArea">
+    <div class="prog-header">
+      <span class="prog-label" id="progLabel">準備中...</span>
+      <span class="prog-pct" id="progPct">0%</span>
+    </div>
+    <div class="prog-track">
+      <div class="prog-fill indeterminate" id="progFill"></div>
+    </div>
+    <div class="log-box" id="logBox"></div>
+  </div>
+
+  <div class="result-card" id="resultCard">
+    <div class="result-header">
+      <span class="result-title">字幕產生完成</span>
+      <span class="result-ok">✓ 成功</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="stat-val" id="statSegs">—</div><div class="stat-lbl">字幕段落</div></div>
+      <div class="stat"><div class="stat-val" id="statDur">—</div><div class="stat-lbl">總時長</div></div>
+      <div class="stat"><div class="stat-val" id="statModel">—</div><div class="stat-lbl">模型</div></div>
+    </div>
+    <div class="preview-box" id="srtPreview"></div>
+    <div class="result-actions">
+      <a class="btn-dl" id="dlBtn" href="#" download>⬇ 下載至預設路徑</a>
+      <button class="btn-save-folder" id="btnSaveToFolder" disabled>📁 儲存至指定資料夾</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+// ── file:// 協議偵測 ──────────────────────────────────────────────────
+// 直接雙擊開啟會導致 CDN fetch CORS 失敗、FSA API 失效、WebGPU 停用
+(function() {
+  if (location.protocol === 'file:') {
+    const overlay = document.getElementById('fileProtocolOverlay');
+    if (overlay) overlay.style.display = 'flex';
+    document.getElementById('fpDismiss')?.addEventListener('click', () => {
+      overlay.style.display = 'none';
+    });
+  }
+})();
+// ─────────────────────────────────────────────────────────────────────
+let selectedFile  = null;
+let selectedModel = 'Xenova/whisper-tiny';
+let pipe          = null;
+let outputContent = '';
+let modelFolderHandle = null;
+let outFolderHandle   = null;
+let inferenceWorker   = null;   
+let workerReady       = false;  
+let activeIdbCacheKey = null;   
+
+const WORKER_CODE = `
+const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2/dist/transformers.min.js';
+
+let pipelineFn = null;
+let envRef     = null;
+let pipe       = null;
+let modelFolderHandle = null;
+
+async function readFromModelFolder(relativePath) {
+  if (!modelFolderHandle) return null;
+  try {
+    const parts = relativePath.split('/');
+    let dir = modelFolderHandle;
+    for (let i = 0; i < parts.length - 1; i++) {
+      dir = await dir.getDirectoryHandle(parts[i], { create: false });
+    }
+    const fh = await dir.getFileHandle(parts[parts.length - 1], { create: false });
+    return await fh.getFile(); // 【修正點一】：回傳 File 物件供串流使用
+  } catch { return null; }
+}
+
+async function writeToModelFolder(relativePath, responseClone) {
+  if (!modelFolderHandle) return;
+  try {
+    const parts = relativePath.split('/');
+    let dir = modelFolderHandle;
+    for (let i = 0; i < parts.length - 1; i++) {
+      dir = await dir.getDirectoryHandle(parts[i], { create: true });
+    }
+    const fh = await dir.getFileHandle(parts[parts.length - 1], { create: true });
+    const writer = await fh.createWritable();
+    
+    // 【修正點一】：支援 Stream 寫入硬碟，防止記憶體超載
+    if (responseClone.body) {
+      // pipeTo 失敗（如網路中斷）時必須 abort writer，否則 FileSystem WritableStream
+      // 會維持鎖定狀態直到頁面關閉，導致同路徑檔案無法再次寫入
+      try {
+        await responseClone.body.pipeTo(writer);
+      } catch (streamErr) {
+        await writer.abort(streamErr);
+        throw streamErr; // 向外層 catch 傳遞，觸發 PROGRESS 錯誤訊息
+      }
+    } else {
+      const buf = await responseClone.arrayBuffer();
+      await writer.write(buf);
+      await writer.close();
+    }
+  } catch (e) {
+    self.postMessage({ type: 'PROGRESS', payload: { status: 'initiate', file: '(寫入資料夾失敗, 將快取於 IndexedDB)' } });
+  }
+}
+
+function installFolderFetchInterceptor() {
+  if (!modelFolderHandle || self._fetchInstalled) return;
+  self._originalFetch = self.fetch;
+  self.fetch = async function(resource, init) {
+    const url = typeof resource === 'string' ? resource : (resource instanceof Request ? resource.url : null);
+    if (url && /huggingface\.co/.test(url)) {
+      const urlObj = new URL(url);
+      const rawPath = urlObj.pathname.slice(1);
+      const localPath = rawPath.replace('/resolve/main/', '/');
+      
+      const fileObj = await readFromModelFolder(localPath);
+      if (fileObj !== null) {
+        self.postMessage({ type: 'PROGRESS', payload: { status: 'initiate', file: '📁 載入本地: ' + localPath.split('/').pop() } });
+        // 【修正點一】：直接回傳包含 File 物件的 Response
+        return new Response(fileObj, {
+          status: 200,
+          headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(fileObj.size) }
+        });
+      }
+      
+      self.postMessage({ type: 'PROGRESS', payload: { status: 'initiate', file: '⬇ 下載並存入資料夾: ' + localPath.split('/').pop() } });
+      const resp = await self._originalFetch(resource, init); // 【修正點一】：傳入原 resource 避免標頭遺失
+      if (resp.ok) {
+        const clone = resp.clone();
+        writeToModelFolder(localPath, clone).catch(() => {});
+      }
+      return resp;
+    }
+    return self._originalFetch(resource, init);
+  };
+  self._fetchInstalled = true;
+}
+
+async function loadLib() {
+  if (pipelineFn) return;
+  try {
+    const mod  = await import(TRANSFORMERS_URL);
+    pipelineFn = mod.pipeline;
+    envRef     = mod.env;
+    envRef.allowLocalModels = false;
+    envRef.useBrowserCache  = true;
+  } catch (e) {
+    throw new Error("無法載入 Transformers.js。若是首次使用，請確保網路連線正常以便快取依賴庫；若已離線使用，可能是瀏覽器快取被清除。詳細錯誤: " + e.message);
+  }
+}
+
+function isUnderMemoryPressure() {
+  if (!performance?.memory) return false;
+  return (performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit) > 0.85;
+}
+
+self.addEventListener('message', async (e) => {
+  const { type, payload } = e.data;
+
+  if (type === 'LOAD_MODEL') {
+    try {
+      if (pipe) {
+        if (typeof pipe.dispose === 'function') pipe.dispose();
+        pipe = null;
+      }
+      
+      if (payload.modelFolderHandle) {
+        modelFolderHandle = payload.modelFolderHandle;
+        installFolderFetchInterceptor();
+      }
+
+      await loadLib();
+
+      const gpuAvailable = typeof navigator !== 'undefined' && !!navigator.gpu;
+      let device, dtype;
+
+      if (gpuAvailable && payload.preferGpu) {
+        try {
+          const adapter = await navigator.gpu.requestAdapter();
+          if (!adapter) throw new Error('no adapter');
+          device = 'webgpu';
+          dtype  = { encoder_model: 'fp16', decoder_model_merged: 'q4' };
+          self.postMessage({ type: 'BACKEND', payload: 'webgpu' });
+        } catch (_) {
+          device = 'wasm';
+          dtype  = payload.dtype;
+          self.postMessage({ type: 'BACKEND', payload: 'wasm-fallback' });
+        }
+      } else {
+        device = 'wasm';
+        dtype  = payload.dtype;
+        self.postMessage({ type: 'BACKEND', payload: 'wasm' });
+      }
+
+      pipe = await pipelineFn('automatic-speech-recognition', payload.modelId, {
+        dtype,
+        device,
+        progress_callback: (x) => self.postMessage({ type: 'PROGRESS', payload: x }),
+      });
+      self.postMessage({ type: 'MODEL_READY', payload: { device } });
+    } catch (err) {
+      self.postMessage({ type: 'ERROR', payload: err.message });
+    }
+  }
+
+  if (type === 'RUN_CHUNK') {
+    try {
+      // 瑕疵修正：LOAD_MODEL 失敗後 pipe 為 null，此時若收到 RUN_CHUNK 會拋
+      // TypeError: pipe is not a function，被外層 catch 吃掉變成不明確的 CHUNK_ERROR
+      // 在此明確攔截，回傳有意義的錯誤訊息讓主線程記錄
+      if (!pipe) {
+        self.postMessage({ type: 'CHUNK_ERROR', payload: { error: '模型尚未載入（pipe is null）', segIdx: payload.segIdx } });
+        return;
+      }
+      if (isUnderMemoryPressure()) {
+        self.postMessage({ type: 'MEMORY_PRESSURE', payload: { segIdx: payload.segIdx } });
+        return;
+      }
+      const { audioData, language, task, segIdx, startSec, strideSec } = payload;
+      const f32 = new Float32Array(audioData);
+
+      // 策略3落地：主動管理推論中間產物的生命週期
+      // Transformers.js v3 的 pipeline 在每次 pipe() 呼叫後會在 model 內部殘留：
+      //   - encoder 的 last_hidden_state Tensor（已用於 cross-attention，但未 dispose）
+      //   - decoder 的 past_key_values KV cache（用於 autoregressive 解碼，推論完後滯留）
+      //   - logits / token Tensor 等中間輸出
+      // 這些 Tensor 儲存於 WASM heap（或 VRAM），不會被 JS GC 自動回收，必須手動清除。
+      let result = await pipe(f32, { language, task, return_timestamps: true });
+
+      // Step 1：postMessage 前先將結果序列化至主線程
+      // structured clone 會深拷貝純 JS 物件（chunks 陣列），Worker 端 result 參考可隨即釋放
+      self.postMessage({ type: 'CHUNK_DONE', payload: { result, segIdx, startSec, strideSec } });
+
+      // Step 2：postMessage 完成後立即解除 Worker 端對 result 的參考
+      // 讓 JS GC 可在下次回收時處理 result 物件本身（雖是純 JS，仍佔用 heap）
+      result = null;
+
+      // Step 3：清除 model 內部殘留的中間 Tensor
+      // Transformers.js v3 的 past_key_values 結構為每層 { key: Tensor, value: Tensor }
+      // 原修正使用 Array.isArray(layerKV) 判斷，但實際結構是物件，導致 dispose 從未執行
+      // 同時覆蓋 _past_key_values（私有快取名稱）與 session_state（部分版本使用）
+      try {
+        const model = pipe.model;
+
+        // 清除 decoder KV cache（past_key_values / _past_key_values）
+        const decoderLike = model?.decoder ?? model;
+        for (const kvKey of ['past_key_values', '_past_key_values', 'session_state']) {
+          const pkv = decoderLike?.[kvKey];
+          if (!pkv) continue;
+          // 支援兩種結構：Array<{key,value}> 或 Array<Array<Tensor>>
+          for (const layerKV of pkv) {
+            if (!layerKV) continue;
+            if (Array.isArray(layerKV)) {
+              for (const t of layerKV) { if (t?.dispose) t.dispose(); }
+            } else if (typeof layerKV === 'object') {
+              // { key: Tensor, value: Tensor } 結構
+              for (const t of Object.values(layerKV)) { if (t?.dispose) t.dispose(); }
+            }
+          }
+          decoderLike[kvKey] = null;
+        }
+
+        // 清除 encoder 殘留的 last_hidden_state
+        const encoderLike = model?.encoder ?? model;
+        if (encoderLike?.last_hidden_state?.dispose) {
+          encoderLike.last_hidden_state.dispose();
+          encoderLike.last_hidden_state = null;
+        }
+      } catch (_) {
+        // Transformers.js 內部結構可能隨版本變動，清除失敗不阻斷主流程
+        // 最壞情況退化為依賴 JS GC，與修改前行為相同
+      }
+
+    } catch (err) {
+      self.postMessage({ type: 'CHUNK_ERROR', payload: { error: err.message, segIdx: payload.segIdx } });
+    }
+  }
+
+  if (type === 'DISPOSE') {
+    if (pipe && typeof pipe.dispose === 'function') pipe.dispose();
+    pipe = null;
+    self.postMessage({ type: 'DISPOSED' });
+  }
+});
+`;
+
+function createWorker() {
+  if (inferenceWorker) {
+    inferenceWorker.terminate();
+    inferenceWorker = null;
+    workerReady = false;
+  }
+  const blob = new Blob([WORKER_CODE], { type: 'application/javascript' });
+  const blobUrl = URL.createObjectURL(blob);
+  inferenceWorker = new Worker(blobUrl);
+  // BUG1 FIX: 延長至 5 分鐘，確保首次下載 Transformers.js CDN 完成後才撤銷 blobUrl
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 300000);
+  return inferenceWorker;
+}
+
+function workerCall(worker, msgType, payload, resolveOn, timeoutMs = 60000) {
+  return new Promise((resolve, reject) => {
+    let timer = null;
+    const handler = (e) => {
+      if (e.data.type === resolveOn) {
+        if (timer) clearTimeout(timer);
+        worker.removeEventListener('message', handler);
+        resolve(e.data);
+      } else if (e.data.type === 'ERROR') {
+        if (timer) clearTimeout(timer);
+        worker.removeEventListener('message', handler);
+        reject(new Error(e.data.payload));
+      }
+    };
+    
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        worker.removeEventListener('message', handler);
+        reject(new Error(`Worker 逾時（等待 ${resolveOn} 超過 ${timeoutMs/1000} 秒）`));
+      }, timeoutMs);
+    }
+    
+    worker.addEventListener('message', handler);
+    worker.postMessage({ type: msgType, payload });
+  });
+}
+
+const FSA_SUPPORTED = ('showDirectoryPicker' in window);
+
+function getAvailableMemoryMB() {
+  if (performance?.memory) {
+    const total = performance.memory.jsHeapSizeLimit / 1024 / 1024;
+    const used  = performance.memory.usedJSHeapSize  / 1024 / 1024;
+    return Math.round(total - used);
+  }
+  return 2048; 
+}
+
+function isWebGPUSupported() { return typeof navigator !== 'undefined' && !!navigator.gpu; }
+
+function chooseDtype(modelId) {
+  const available = getAvailableMemoryMB();
+  const sizeMap = {
+    'Xenova/whisper-tiny': 75, 'Xenova/whisper-base': 145, 'Xenova/whisper-small': 460,
+    'Xenova/whisper-medium': 1500, 'onnx-community/whisper-large-v3-turbo': 1600,
+  };
+  const modelMB = sizeMap[modelId] ?? 500;
+  // C17 FIX: 使用 uiLog 參數控制是否輸出至 UI log box
+  // 在模型按鈕點擊期間 progArea 未顯示，log() 訊息會被靜默丟棄（NEW-BUG-E 的副作用）
+  // 改為只在 startBtn 流程中明確呼叫 log()，chooseDtype 本身不呼叫 log()
+  if (available < modelMB * 3) return 'q4';
+  if (available < modelMB * 5) return 'q8';
+  return 'fp32';
+}
+
+function formatSize(b) {
+  if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
+  return (b/(1024*1024)).toFixed(1) + ' MB';
+}
+
+function fmtTime(sec) {
+  sec = Math.max(0, sec); // C13 FIX: 防止負數時間
+  // D3 FIX: Math.round 可能讓 ms=1000（當小數≥0.9995），導致 SRT 時間碼多一位（如 00:00:01,1000）
+  // 改用 Math.floor 取整，再對整秒進行正規化，保證 ms 永遠是 0-999
+  const totalMs = Math.floor(sec * 1000);
+  const ms = totalMs % 1000;
+  const totalSec = Math.floor(totalMs / 1000);
+  const h  = Math.floor(totalSec / 3600);
+  const m  = Math.floor((totalSec % 3600) / 60);
+  const s  = totalSec % 60;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')},${String(ms).padStart(3,'0')}`;
+}
+
+function chunksToSrt(chunks) {
+  return chunks.filter(c => c.timestamp && c.timestamp[0] != null).map((c, i) => {
+      const start = fmtTime(c.timestamp[0]);
+      // BUG4 FIX + D4 FIX: null 保護 + 確保 endSec >= startSec，防止反向時間戳破壞播放器
+      const rawEnd = c.timestamp[1] != null ? c.timestamp[1] : (c.timestamp[0] != null ? c.timestamp[0] + 2 : 2);
+      const endSec = Math.max(rawEnd, c.timestamp[0] + 0.001);
+      const end   = fmtTime(endSec);
+      return `${i+1}\n${start} --> ${end}\n${c.text.trim()}`;
+    }).join('\n\n') + '\n';
+}
+
+function chunksToTxt(chunks) {
+  if (!chunks.length) return '';
+  return chunks.map(c => c.text.trim()).filter(Boolean).join('\n');
+}
+
+function chunksToMarkdown(chunks) {
+  if (!chunks.length) return '';
+  const lines = ['# 字幕文字稿\n'];
+  chunks.forEach((c) => {
+    if (c.timestamp && c.timestamp[0] != null) {
+      const start = fmtTime(c.timestamp[0]).replace(',', '.');
+      // NEW-BUG-C FIX + D4 FIX: null 保護 + 確保 endSec >= startSec
+      const rawEnd2 = c.timestamp[1] != null ? c.timestamp[1] : c.timestamp[0] + 2;
+      const endSec = Math.max(rawEnd2, c.timestamp[0] + 0.001);
+      const end   = fmtTime(endSec).replace(',', '.');
+      lines.push(`**[${start} → ${end}]** ${c.text.trim()}\n`);
+    } else {
+      lines.push(c.text.trim() + '\n');
+    }
+  });
+  return lines.join('\n');
+}
+
+function getExtension(fmt) { return { srt: 'srt', txt: 'txt', md: 'md' }[fmt] || 'srt'; }
+
+const logBox    = document.getElementById('logBox');
+const progLabel = document.getElementById('progLabel');
+const progPct   = document.getElementById('progPct');
+const progFill  = document.getElementById('progFill');
+
+function log(msg, type = '') {
+  // NEW-BUG-E FIX: 僅在進度區已顯示時才自動展開 logBox，避免辨識前就意外彈出
+  if (document.getElementById('progArea').classList.contains('show')) {
+    logBox.classList.add('show');
+  }
+  const ts   = new Date().toTimeString().slice(0,8);
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  const tsSpan  = document.createElement('span');
+  tsSpan.className = 'log-ts';
+  tsSpan.textContent = ts;
+  const msgSpan = document.createElement('span');
+  if (type) msgSpan.className = 'log-' + type;
+  msgSpan.textContent = msg; 
+  line.appendChild(tsSpan);
+  line.appendChild(msgSpan);
+  logBox.appendChild(line);
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+function setProgress(pct, label, indet = false) {
+  progLabel.textContent = label;
+  progPct.textContent   = Math.round(pct) + '%';
+  progFill.classList.toggle('indeterminate', indet);
+  if (!indet) progFill.style.width = pct + '%';
+}
+
+async function readFromModelFolderMain(relativePath) {
+  if (!modelFolderHandle) return null;
+  try {
+    const parts = relativePath.split('/');
+    let dir = modelFolderHandle;
+    for (let i = 0; i < parts.length - 1; i++) {
+      dir = await dir.getDirectoryHandle(parts[i], { create: false });
+    }
+    const fh   = await dir.getFileHandle(parts[parts.length - 1], { create: false });
+    const file = await fh.getFile();
+    return await file.arrayBuffer();
+  } catch { return null; }
+}
+
+const modelFolderPathEl  = document.getElementById('modelFolderPath');
+const btnPickModelFolder = document.getElementById('btnPickModelFolder');
+const btnClearModelFolder= document.getElementById('btnClearModelFolder');
+const modelCacheStatus   = document.getElementById('modelCacheStatus');
+
+async function updateModelFolderStatus() {
+  if (!modelFolderHandle) {
+    modelFolderPathEl.textContent = '未指定（使用瀏覽器 IndexedDB）';
+    modelFolderPathEl.classList.remove('selected');
+    btnClearModelFolder.style.display = 'none';
+    modelCacheStatus.textContent = '';
+    const sp = document.createElement('span');
+    sp.className = 'info';
+    sp.textContent = 'ℹ 指定資料夾後，模型會優先下載至該資料夾。';
+    modelCacheStatus.appendChild(sp);
+    return;
+  }
+
+  modelFolderPathEl.textContent = `📁 ${modelFolderHandle.name}/`;
+  modelFolderPathEl.classList.add('selected');
+  btnClearModelFolder.style.display = '';
+
+  const modelBase = selectedModel + '/config.json';
+  const exists = await readFromModelFolderMain(modelBase);
+  modelCacheStatus.textContent = '';
+  const sp2 = document.createElement('span');
+  if (exists !== null) {
+    sp2.className = 'ok';
+    sp2.textContent = `✓ 已在資料夾中找到模型，將直接載入。`;
+  } else {
+    sp2.className = 'warn';
+    sp2.textContent = `⚠ 資料夾中尚無模型，首次辨識時將自動下載。`;
+  }
+  modelCacheStatus.appendChild(sp2);
+}
+
+if (!FSA_SUPPORTED) {
+  btnPickModelFolder.disabled = true;
+  btnPickModelFolder.title    = '此瀏覽器不支援本地資料夾 API';
+  modelCacheStatus.textContent = '';
+  const noFsaSpan = document.createElement('span');
+  noFsaSpan.className = 'warn';
+  noFsaSpan.textContent = '⚠ 此瀏覽器不支援本地資料夾 API。模型將快取於 IndexedDB。';
+  modelCacheStatus.appendChild(noFsaSpan);
+}
+
+btnPickModelFolder.addEventListener('click', async () => {
+  if (!FSA_SUPPORTED) return;
+  try {
+    modelFolderHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    pipe = null; 
+    await updateModelFolderStatus();
+    log(`✓ 模型資料夾已設定為：${modelFolderHandle.name}`, 'ok');
+  } catch (e) {
+    if (e.name !== 'AbortError') log('選擇資料夾失敗：' + e.message, 'err');
+  }
+});
+
+btnClearModelFolder.addEventListener('click', () => {
+  modelFolderHandle = null;
+  pipe = null;
+  updateModelFolderStatus();
+  log('已清除模型資料夾設定，改用 IndexedDB', 'warn');
+});
+
+const outFolderPathEl  = document.getElementById('outFolderPath');
+const btnPickOutFolder = document.getElementById('btnPickOutFolder');
+const btnClearOutFolder= document.getElementById('btnClearOutFolder');
+const btnSaveToFolder  = document.getElementById('btnSaveToFolder');
+
+if (!FSA_SUPPORTED) {
+  btnPickOutFolder.disabled  = true;
+  btnSaveToFolder.disabled   = true;
+}
+
+btnPickOutFolder.addEventListener('click', async () => {
+  if (!FSA_SUPPORTED) return;
+  try {
+    outFolderHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    outFolderPathEl.textContent = '';
+    const dot1 = document.createElement('span');
+    dot1.className = 'out-path-dot';
+    outFolderPathEl.appendChild(dot1);
+    outFolderPathEl.appendChild(document.createTextNode(`📁 ${outFolderHandle.name}/`));
+    outFolderPathEl.classList.add('selected');
+    btnClearOutFolder.style.display = '';
+    btnSaveToFolder.disabled = false;
+  } catch (e) {
+    if (e.name !== 'AbortError') log('選擇輸出資料夾失敗：' + e.message, 'err');
+  }
+});
+
+btnClearOutFolder.addEventListener('click', () => {
+  outFolderHandle = null;
+  outFolderPathEl.textContent = '';
+  const dot2 = document.createElement('span');
+  dot2.className = 'out-path-dot';
+  dot2.style.opacity = '0.4';
+  outFolderPathEl.appendChild(dot2);
+  outFolderPathEl.appendChild(document.createTextNode('未指定（瀏覽器預設下載路徑）'));
+  outFolderPathEl.classList.remove('selected');
+  btnClearOutFolder.style.display = 'none';
+  btnSaveToFolder.disabled = true;
+});
+
+document.querySelectorAll('.model-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.model-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const newModel = btn.dataset.model;
+
+    if (newModel !== selectedModel && inferenceWorker && workerReady) {
+      // D11 FIX: fire-and-forget DISPOSE 無法保證記憶體立即釋放
+      // 改為先送 DISPOSE 再於短暫延遲後強制 terminate，確保 Worker 被回收
+      inferenceWorker.postMessage({ type: 'DISPOSE', payload: {} });
+      const oldWorker = inferenceWorker;
+      setTimeout(() => oldWorker.terminate(), 2000);
+      inferenceWorker = null;
+      workerReady = false;
+      pipe = null;
+      log(`模型切換：已釋放舊模型 ${selectedModel}`, 'warn');
+    }
+
+    selectedModel = newModel;
+    const dtype  = chooseDtype(selectedModel);
+    const hasGpu = isWebGPUSupported();
+    const infoBox = document.getElementById('infoBox');
+    infoBox.textContent = '';
+    const strong = document.createElement('strong');
+    strong.textContent = '▸ ' + btn.textContent.replace('⚡','').trim();
+    const textNode = document.createTextNode(' — 首次使用需下載模型，之後快取於本地。音訊僅在本機處理，不傳送任何資料。');
+    const br = document.createElement('br');
+    const hint = document.createElement('span');
+    hint.style.cssText = 'color:var(--warn);font-size:0.72em;';
+    hint.textContent = `⚙ 量化：${dtype} ／ 後端：${hasGpu ? '⚡ WebGPU' : '⚪ WASM'}`;
+    infoBox.appendChild(strong);
+    infoBox.appendChild(textNode);
+    infoBox.appendChild(br);
+    infoBox.appendChild(hint);
+    document.getElementById('ramWarn').style.display = btn.dataset.warn === 'ram' ? 'block' : 'none';
+    updateModelFolderStatus();
+  });
+});
+
+window.addEventListener('beforeunload', () => {
+  if (inferenceWorker) {
+    inferenceWorker.postMessage({ type: 'DISPOSE', payload: {} });
+    inferenceWorker.terminate();
+  }
+  // D6 FIX: 釋放下載用 blob URL，防止頁面卸載後記憶體洩漏
+  const dlBtn = document.getElementById('dlBtn');
+  if (dlBtn?.href?.startsWith('blob:')) URL.revokeObjectURL(dlBtn.href);
+});
+
+const fileInput  = document.getElementById('fileInput');
+const dropZone   = document.getElementById('dropZone');
+const fileChip   = document.getElementById('fileChip');
+const fileNameEl = document.getElementById('fileName');
+const fileSizeEl = document.getElementById('fileSize');
+const startBtn   = document.getElementById('startBtn');
+const rmBtn      = document.getElementById('rmBtn');
+const outFilenameEl = document.getElementById('outFilename');
+
+function setFile(f) {
+  selectedFile = f;
+  fileNameEl.textContent = f.name;
+  fileSizeEl.textContent = formatSize(f.size);
+  fileChip.classList.add('show');
+  outFilenameEl.placeholder = f.name.replace(/\.[^.]+$/, '');
+  checkReady();
+}
+
+function clearFile() {
+  selectedFile = null;
+  fileInput.value = '';
+  fileChip.classList.remove('show');
+  outFilenameEl.placeholder = '留空則沿用音訊檔名';
+  outFilenameEl.value = ''; // 【修正點三】：確保自訂檔名欄位被完整清空
+  checkReady();
+}
+
+function checkReady() { startBtn.disabled = !selectedFile; }
+
+fileInput.addEventListener('change', e => { if (e.target.files[0]) setFile(e.target.files[0]); });
+rmBtn.addEventListener('click', clearFile);
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('over');
+  if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
+});
+
+const IDB_NAME    = 'whisper-audio-cache';
+const IDB_STORE   = 'shards';
+const IDB_VERSION = 1;
+const LARGE_FILE_THRESHOLD = 50 * 1024 * 1024;  
+const SHARD_SAMPLES = 10 * 16000 * 60;          
+
+let _idb = null;
+function openIDB() {
+  if (_idb) return Promise.resolve(_idb);
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = (e) => { e.target.result.createObjectStore(IDB_STORE); };
+    req.onsuccess = (e) => {
+      _idb = e.target.result;
+      // C15 FIX: 監聽 versionchange（另一個分頁升級 DB）與 close 事件，清除快取避免使用失效連線
+      _idb.onversionchange = () => { _idb.close(); _idb = null; };
+      _idb.onclose = () => { _idb = null; };
+      resolve(_idb);
+    };
+    req.onerror   = (e) => reject(e.target.error);
+  });
+}
+
+// 修正重點1補充：啟動時強制清空所有遺留的 IDB 分片快取
+// 瑕疵修正：原游標迴圈只有 cursor.continue() 而無 cursor.delete()，是完全的 No-op
+// 改用 store.clear() 清除所有條目（本 DB 專屬用於音訊暫存，不存在多分頁共用資料的顧慮）
+async function clearAllIDBCache() {
+  try {
+    const db = await openIDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const req = tx.objectStore(IDB_STORE).clear();
+      req.onsuccess = () => resolve();
+      req.onerror   = (e) => reject(e.target.error);
+    });
+  } catch (e) {
+    console.warn("清理歷史 IndexedDB 快取失敗", e);
+  }
+}
+// 頁面載入時執行清理
+// BUG7 FIX: type="module" 為 deferred，DOMContentLoaded 可能已觸發，直接呼叫更可靠
+clearAllIDBCache();
+
+async function idbPut(key, value) {
+  try {
+    const db = await openIDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(value, key);
+      tx.oncomplete = resolve;
+      tx.onerror    = (e) => reject(e.target.error);
+    });
+  } catch (e) {
+    console.warn("IndexedDB 寫入失敗 (可能處於無痕模式或容量不足)", e);
+    throw e;
+  }
+}
+
+async function idbGet(key) {
+  const db = await openIDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).get(key);
+    req.onsuccess = (e) => resolve(e.target.result ?? null);
+    req.onerror   = (e) => reject(e.target.error);
+  });
+}
+
+async function idbDeletePrefix(prefix) {
+  try {
+    const db = await openIDB();
+    return new Promise((resolve, reject) => {
+      const store = db.transaction(IDB_STORE, 'readwrite').objectStore(IDB_STORE);
+      const req   = store.openCursor();
+      req.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (!cursor) { resolve(); return; }
+        if (String(cursor.key).startsWith(prefix)) cursor.delete();
+        cursor.continue();
+      };
+      req.onerror = (e) => reject(e.target.error);
+    });
+  } catch (e) { return Promise.resolve(); }
+}
+
+async function storeAudioInIDB(cacheKey, float32Audio) {
+  const total  = float32Audio.length;
+  let   offset = 0, idx = 0;
+  while (offset < total) {
+    const shard = float32Audio.subarray(offset, offset + SHARD_SAMPLES);
+    await idbPut(`${cacheKey}:shard:${idx}`, shard.slice()); 
+    offset += SHARD_SAMPLES;
+    idx++;
+  }
+  await idbPut(`${cacheKey}:meta`, { shardCount: idx, totalSamples: total });
+  return { shardCount: idx, totalSamples: total, cacheKey };
+}
+
+async function readAudioShard(cacheKey, shardIdx) {
+  return idbGet(`${cacheKey}:shard:${shardIdx}`);
+}
+
+async function decodeAudio(file) {
+  log('解碼音訊中...', 'info');
+  const arrayBuf = await file.arrayBuffer();
+  // D7 FIX: 先以預設 AudioContext 解碼（保留原始取樣率），再判斷是否需要重取樣
+  // 直接傳 sampleRate:16000 給 AudioContext 在舊版 Safari 可能被忽略，導致 Whisper 收到錯誤率的音訊
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  let decoded;
+  try {
+    decoded = await audioCtx.decodeAudioData(arrayBuf);
+  } catch (decodeErr) {
+    audioCtx.close();
+    throw new Error('音訊解碼失敗：' + decodeErr.message);
+  }
+  audioCtx.close();
+
+  // 混音至單聲道（正確處理任意聲道數：mono / stereo / 5.1 / 7.1）
+  const TARGET_SR = 16000;
+  let mono;
+  if (decoded.numberOfChannels === 1) {
+    mono = decoded.getChannelData(0).slice();
+  } else {
+    // 對所有聲道逐樣本求平均，確保辨識音訊完整
+    const numCh = decoded.numberOfChannels;
+    const len   = decoded.getChannelData(0).length;
+    mono = new Float32Array(len);
+    for (let ch = 0; ch < numCh; ch++) {
+      const chData = decoded.getChannelData(ch);
+      for (let s = 0; s < len; s++) mono[s] += chData[s];
+    }
+    for (let s = 0; s < len; s++) mono[s] /= numCh;
+  }
+  // 瑕疵修正：decoded AudioBuffer 在 mono 建立完成後已無用
+  // 但仍佔用 scope 內記憶體直到函式 return；大型音訊（>50MB）解碼後可達數百 MB
+  // 解除參考讓 GC 可提前回收，與下方 mono→IDB 流程的 mono=null 形成完整的記憶體釋放鏈
+  // decoded.sampleRate 在此之後仍需使用，故先儲存再解除
+  const originalSampleRate = decoded.sampleRate;
+  decoded = null; // 提前釋放 AudioBuffer（PCM 資料已複製至 mono）
+
+  // D7 FIX: 若原始取樣率不是 16kHz，使用 OfflineAudioContext 重取樣
+  if (originalSampleRate !== TARGET_SR) {
+    log(`重取樣：${originalSampleRate}Hz → ${TARGET_SR}Hz`, 'info');
+    const targetLen = Math.round(mono.length * TARGET_SR / originalSampleRate);
+    const offlineCtx = new OfflineAudioContext(1, targetLen, TARGET_SR);
+    const src = offlineCtx.createBufferSource();
+    const buf = offlineCtx.createBuffer(1, mono.length, originalSampleRate);
+    buf.copyToChannel(mono, 0);
+    src.buffer = buf;
+    src.connect(offlineCtx.destination);
+    src.start(0);
+    const resampled = await offlineCtx.startRendering();
+    mono = resampled.getChannelData(0).slice();
+  }
+
+  if (file.size > LARGE_FILE_THRESHOLD) {
+    const cacheKey = `audio:${file.name}:${file.size}:${file.lastModified}`;
+    log(`大檔案偵測（${formatSize(file.size)}）→ 嘗試分片存入 IndexedDB`, 'warn');
+    try {
+      const { shardCount, totalSamples } = await storeAudioInIDB(cacheKey, mono);
+      mono = null; // 釋放記憶體，後續透過 IDB 分片讀取
+      log(`✓ 已分 ${shardCount} 片儲存至 IndexedDB（共 ${(totalSamples/16000).toFixed(1)}s）`, 'ok');
+      activeIdbCacheKey = cacheKey; 
+      return { type: 'idb', cacheKey, totalSamples, shardCount };
+    } catch (e) {
+      log('⚠ IndexedDB 儲存失敗，降級使用記憶體模式處理大檔案', 'warn');
+      return mono; // mono 此時仍是有效的 Float32Array（storeAudioInIDB 在 throw 前未 null）
+    }
+  }
+
+  return mono;
+}
+
+async function* audioChunkGenerator(audioOrDesc, sampleRate = 16000, chunkSec = 30, strideSec = 5) {
+  const chunkLen  = chunkSec  * sampleRate;
+  const strideLen = strideSec * sampleRate;
+
+  if (audioOrDesc instanceof Float32Array) {
+    let offset = 0;
+    while (offset < audioOrDesc.length) {
+      const end = Math.min(offset + chunkLen, audioOrDesc.length);
+      yield { data: audioOrDesc.slice(offset, end), startSec: offset / sampleRate, endSec: end / sampleRate };
+      if (end >= audioOrDesc.length) break;
+      offset += chunkLen - strideLen;
+    }
+    return;
+  }
+
+  const { cacheKey, totalSamples } = audioOrDesc;
+  let globalOffset = 0;
+  let shardIdx = 0;
+  let shardBuf = null;
+
+  // NEW-BUG-F FIX: 使用 try/finally 確保分片失敗時 IDB 仍能清理，防止資料洩漏
+  try {
+    while (globalOffset < totalSamples) {
+      const endGlobal = Math.min(globalOffset + chunkLen, totalSamples);
+      const chunk = new Float32Array(endGlobal - globalOffset);
+      let written = 0;
+
+      let pos = globalOffset;
+      let shardReadFailed = false;
+      while (written < chunk.length) {
+        const si = Math.floor(pos / SHARD_SAMPLES);
+        if (!shardBuf || shardIdx !== si) {
+          shardBuf = await readAudioShard(cacheKey, si);
+          shardIdx = si;
+        }
+        if (!shardBuf) {
+          // BUG5 FIX: 分片讀取失敗，記錄並跳出，避免以不完整資料（含零值）提交辨識
+          console.warn(`IDB 分片讀取失敗：cacheKey=${cacheKey}, shardIdx=${si}`);
+          shardReadFailed = true;
+          break;
+        }
+        const shardPos  = pos - si * SHARD_SAMPLES;
+        const available = shardBuf.length - shardPos;
+        const needed    = chunk.length - written;
+        const toCopy    = Math.min(available, needed);
+        chunk.set(shardBuf.subarray(shardPos, shardPos + toCopy), written);
+        written += toCopy;
+        pos     += toCopy;
+      }
+
+      if (!shardReadFailed) {
+        yield { data: chunk, startSec: globalOffset / sampleRate, endSec: endGlobal / sampleRate };
+      }
+      if (endGlobal >= totalSamples) break;
+      globalOffset += chunkLen - strideLen;
+    }
+  } finally {
+    await idbDeletePrefix(cacheKey);
+    log('✓ IDB 暫存已清除', 'ok');
+  }
+}
+
+btnSaveToFolder.addEventListener('click', async () => {
+  if (!outFolderHandle || !outputContent) return;
+  const fmt      = document.getElementById('outFormat').value;
+  const ext      = getExtension(fmt);
+  const baseName = getOutputBasename();
+  const filename = `${baseName}.${ext}`;
+  try {
+    const fh     = await outFolderHandle.getFileHandle(filename, { create: true });
+    const writer = await fh.createWritable();
+    await writer.write(new Blob([outputContent], { type: 'text/plain;charset=utf-8' }));
+    await writer.close();
+    log(`✓ 已儲存至資料夾：${outFolderHandle.name}/${filename}`, 'ok');
+    btnSaveToFolder.textContent = `✓ 已儲存 ${filename}`;
+    setTimeout(() => { btnSaveToFolder.textContent = '📁 儲存至指定資料夾'; }, 3000);
+  } catch (e) {
+    log('儲存至資料夾失敗：' + e.message, 'err');
+  }
+});
+
+function getOutputBasename() {
+  const custom = outFilenameEl.value.trim();
+  if (custom) {
+    // D9 FIX: 移除所有路徑分隔符與危險字元，防止 FSA path traversal（如 ../../../etc/passwd）
+    return custom.replace(/[/\\:*?"<>|]/g, '_').replace(/^\.+/, '') || 'subtitles';
+  }
+  if (selectedFile) return selectedFile.name.replace(/\.[^.]+$/, '');
+  return 'subtitles';
+}
+
+startBtn.addEventListener('click', async () => {
+  if (!selectedFile) return;
+
+  // 修正重點2：凍結辨識期間的破壞性 UI 互動，避免 State Desync
+  startBtn.disabled = true;
+  rmBtn.disabled = true;
+  fileInput.disabled = true;
+  dropZone.classList.add('disabled');
+  
+  document.getElementById('spinner').classList.add('show');
+  document.getElementById('btnTxt').textContent = '辨識中...';
+  document.getElementById('progArea').classList.add('show');
+  document.getElementById('resultCard').classList.remove('show');
+  logBox.innerHTML = '';
+  logBox.classList.remove('show'); // 瑕疵修正：重新辨識時須移除殘留的 .show class，否則空 logBox 提前可見
+  outputContent = '';
+
+  setProgress(0, '準備中...', true);
+  log('▸ 開始離線辨識流程', 'info');
+  log(`檔案：${selectedFile.name} (${formatSize(selectedFile.size)})`);
+
+  try {
+    let worker = inferenceWorker ?? createWorker();
+    inferenceWorker = worker;
+
+    if (!workerReady || pipe !== selectedModel) {
+      log(`載入模型：${selectedModel}（首次需下載）`, 'info');
+      setProgress(0, '下載/載入模型...', true);
+
+      const dtype     = chooseDtype(selectedModel);
+      // C17 FIX: 在 progArea 已顯示的辨識流程中才輸出量化資訊至 log
+      const availMB = getAvailableMemoryMB();
+      if (dtype === 'q4') log(`記憶體偵測：可用 ${availMB}MB，啟用 q4 量化`, 'warn');
+      else if (dtype === 'q8') log(`記憶體偵測：可用 ${availMB}MB，啟用 q8 量化`, 'warn');
+      else log(`記憶體充足（可用 ${availMB}MB），使用 fp32 精度`, 'ok');
+      const preferGpu = isWebGPUSupported();
+      
+      const progressHandler = (e) => {
+        const { type: t, payload: x } = e.data;
+        if (t === 'PROGRESS') {
+          if (x.status === 'downloading') {
+            const pct = x.loaded && x.total ? (x.loaded / x.total * 100) : 0;
+            setProgress(pct * 0.5, `下載模型 ${x.file ?? ''} ${Math.round(pct)}%`);
+          } else if (x.status === 'loading') {
+            setProgress(50, '載入模型至記憶體...', true);
+          } else if (x.status === 'initiate') {
+            log(`初始化：${x.file ?? ''}`, 'info');
+          }
+        } else if (t === 'BACKEND') {
+          const labels = { webgpu: '🟢 WebGPU', wasm: '⚪ WASM', 'wasm-fallback': '⚠ WASM (降級)' };
+          log(`推論後端：${labels[x] ?? x}`, x === 'webgpu' ? 'ok' : 'info');
+          document.getElementById('statModel').textContent = x === 'webgpu' ? '⚡GPU' : 'CPU';
+        }
+      };
+      worker.addEventListener('message', progressHandler);
+
+      try {
+        await workerCall(worker, 'LOAD_MODEL', { 
+          modelId: selectedModel, 
+          dtype, 
+          preferGpu,
+          // NEW-BUG-B FIX: FileSystemDirectoryHandle 在部分瀏覽器不可 structured-clone
+          // 僅在有值時傳入，worker 端已有 null 保護
+          modelFolderHandle: modelFolderHandle ?? null
+        // 瑕疵修正：原 timeoutMs=0 在 workerCall 內等同永不逾時（if(timeoutMs>0) 跳過計時器）
+        // 首次下載模型可能需數分鐘，但若 Worker 靜默崩潰則永久 hang 無法恢復
+        // 改為 600000ms（10 分鐘），足以涵蓋慢速網路首次下載，同時保留最終保護
+        }, 'MODEL_READY', 600000);
+      } finally {
+        // C9 FIX: 確保 progressHandler 在成功與失敗路徑均被移除，防止 ghost handler 洩漏
+        worker.removeEventListener('message', progressHandler);
+      }
+      workerReady = true;
+      pipe = selectedModel;
+      log(`模型載入完成 ✓`, 'ok');
+    }
+
+    setProgress(57, '解碼音訊...', true);
+    const audio = await decodeAudio(selectedFile);
+    const totalSec = (audio instanceof Float32Array ? audio.length : audio.totalSamples) / 16000;
+    log(`音訊解碼完成，長度：${totalSec.toFixed(1)}s`, 'ok');
+
+    const language = document.getElementById('language').value || undefined;
+    const task     = document.getElementById('task').value;
+    const fmt      = document.getElementById('outFormat').value;
+
+    const CHUNK_SEC  = 30;
+    const STRIDE_SEC = 5;
+    const totalSamples = audio instanceof Float32Array ? audio.length : audio.totalSamples;
+    const totalChunks = Math.ceil((totalSamples - STRIDE_SEC * 16000) / ((CHUNK_SEC - STRIDE_SEC) * 16000)) || 1;
+    
+    const allChunks = [];
+    let i = 0;
+    const gen = audioChunkGenerator(audio, 16000, CHUNK_SEC, STRIDE_SEC);
+
+    for await (const seg of gen) {
+      const pct = 60 + (i / totalChunks) * 35;
+      setProgress(pct, `辨識中... 段落 ${i + 1}`);
+
+      // C18 FIX: 需要兩份獨立複製：一份用於 transfer（傳給 Worker），一份備用於 retry
+      // transfer 後 segDataForTransfer.buffer 會 detach，任何對其的操作（含 .slice()）均拋 TypeError
+      const segDataForTransfer = seg.data.slice(0);  // 複製品1：buffer 將被 transfer 至 Worker
+      const segDataForRetry    = seg.data.slice(0);  // 複製品2：保留完整資料供 MEMORY_PRESSURE retry
+      const transfer = segDataForTransfer.buffer;
+
+      let evt;
+      try {
+        evt = await new Promise((resolve, reject) => {
+          let chunkTimer;
+          const handler = (e) => {
+            const t = e.data.type;
+            if (['CHUNK_DONE', 'CHUNK_ERROR', 'MEMORY_PRESSURE', 'ERROR'].includes(t) &&
+                (e.data.payload?.segIdx === i || t === 'ERROR' || t === 'MEMORY_PRESSURE')) {
+              clearTimeout(chunkTimer);
+              worker.removeEventListener('message', handler);
+              if (t === 'ERROR') reject(new Error(e.data.payload));
+              else resolve(e.data);
+            }
+          };
+          chunkTimer = setTimeout(() => {
+            worker.removeEventListener('message', handler);
+            reject(new Error(`段落推論逾時`));
+          }, 120000);
+          worker.addEventListener('message', handler);
+          worker.postMessage({ type: 'RUN_CHUNK', payload: { audioData: transfer, language, task, segIdx: i, startSec: seg.startSec, strideSec: STRIDE_SEC } }, [transfer]);
+        });
+      } catch (segErr) {
+        log(`⚠ 段落 ${i+1} 跳過`, 'warn');
+        i++; continue;
+      }
+
+      if (evt.type === 'MEMORY_PRESSURE') {
+        log(`⚠ 記憶體壓力，重載模型...`, 'warn');
+        const dtype = chooseDtype(selectedModel);
+        worker = createWorker();
+        inferenceWorker = worker;
+        workerReady = false;
+        await workerCall(worker, 'LOAD_MODEL', { modelId: selectedModel, dtype, preferGpu: isWebGPUSupported(), modelFolderHandle: modelFolderHandle ?? null }, 'MODEL_READY', 120000); // D2 FIX: 加入 120s 逾時保護
+        workerReady = true;
+        pipe = selectedModel;
+        
+        // NEW-BUG-A FIX: segDataCopy.buffer 已在 transfer 後 detached，必須從 Float32Array 重新複製
+        // 瑕疵修正：若 retryBuf 已被 transfer（detached），byteLength === 0，
+        // postMessage 時會拋 DataCloneError 被靜默 catch，需在此提前檢測並明確記錄
+        const retryBuf = segDataForRetry.buffer;
+        if (retryBuf.byteLength === 0) {
+          log(`⚠ 段落 ${i+1} retry buffer 已失效（detached），跳過`, 'warn');
+          i++; continue;
+        }
+        try {
+          evt = await new Promise((resolve, reject) => {
+            // BUG2 FIX: 加入逾時保護，防止 retry 永久 hang
+            const retryTimer = setTimeout(() => {
+              worker.removeEventListener('message', h);
+              reject(new Error('重試段落推論逾時'));
+            }, 120000);
+            const h = (e) => {
+              if (['CHUNK_DONE','CHUNK_ERROR','ERROR'].includes(e.data.type)) {
+                clearTimeout(retryTimer);
+                worker.removeEventListener('message', h);
+                if (e.data.type === 'ERROR') reject(new Error(e.data.payload));
+                else resolve(e.data);
+              }
+            };
+            worker.addEventListener('message', h);
+            worker.postMessage({ type: 'RUN_CHUNK', payload: { audioData: retryBuf, language, task, segIdx: i, startSec: seg.startSec, strideSec: STRIDE_SEC } }, [retryBuf]);
+          });
+        } catch (retryErr) {
+          i++; continue;
+        }
+      }
+
+      if (evt.type === 'CHUNK_ERROR') {
+        i++; continue;
+      }
+
+      const { result, startSec: chunkStart, strideSec: chunkStride } = evt.payload;
+      const segChunks = result.chunks ?? [];
+      for (const c of segChunks) {
+        if (!c.timestamp) continue;
+        const [s, e2] = c.timestamp;
+        const cleanStart = i === 0 ? 0 : chunkStride;
+        if (s != null && s < cleanStart) continue;
+        allChunks.push({
+          text: c.text,
+          timestamp: [s != null ? s + chunkStart : null, e2 != null ? e2 + chunkStart : null],
+        });
+      }
+      i++;
+    }
+
+    setProgress(96, '產生輸出檔案...', false);
+    const chunks = allChunks.filter((c, i, arr) => i === 0 || c.text.trim() !== arr[i - 1].text.trim());
+
+    if (fmt === 'srt') outputContent = chunks.length === 0 ? `1\n00:00:00,000 --> 00:00:05,000\n（無辨識結果）` : chunksToSrt(chunks);
+    else if (fmt === 'txt') outputContent = chunks.length === 0 ? '（無辨識結果）' : chunksToTxt(chunks);
+    else if (fmt === 'md') outputContent = chunks.length === 0 ? `# 字幕文字稿\n\n（無辨識結果）` : chunksToMarkdown(chunks);
+
+    setProgress(100, '完成！', false);
+
+    const blob = new Blob([outputContent], { type: 'text/plain;charset=utf-8' });
+    const dlBtn = document.getElementById('dlBtn');
+    if (dlBtn.href && dlBtn.href.startsWith('blob:')) URL.revokeObjectURL(dlBtn.href);
+    const url = URL.createObjectURL(blob);
+    const ext = getExtension(fmt);
+    const baseName = getOutputBasename();
+    dlBtn.href = url;
+    dlBtn.download = `${baseName}.${ext}`;
+    dlBtn.textContent = `⬇ 下載 ${ext.toUpperCase()} 至預設路徑`;
+
+    const dur = chunks.length > 0 ? (chunks[chunks.length-1].timestamp?.[1] ?? 0) : 0;
+    document.getElementById('statSegs').textContent  = chunks.length || '1';
+    document.getElementById('statDur').textContent   = dur > 0 ? `${Math.floor(dur/60)}m${Math.floor(dur%60)}s` : '—';
+
+    const previewLines = outputContent.split('\n').slice(0, 40);
+    document.getElementById('srtPreview').textContent = previewLines.join('\n') + (outputContent.split('\n').length > 40 ? '\n...' : '');
+
+    btnSaveToFolder.disabled = !outFolderHandle;
+    document.getElementById('resultCard').classList.add('show');
+
+    if (outFolderHandle) btnSaveToFolder.click();
+
+  } catch(e) {
+    log('錯誤：' + e.message, 'err');
+    setProgress(0, '失敗');
+  } finally {
+    // 修正重點2補充：流程結束後解除 UI 凍結狀態
+    startBtn.disabled = false;
+    rmBtn.disabled = false;
+    fileInput.disabled = false;
+    dropZone.classList.remove('disabled');
+
+    document.getElementById('spinner').classList.remove('show');
+    document.getElementById('btnTxt').textContent = '▶ 開始辨識';
+    if (activeIdbCacheKey) {
+      idbDeletePrefix(activeIdbCacheKey).catch(() => {});
+      activeIdbCacheKey = null;
+    }
+  }
+});
+
+updateModelFolderStatus();
+</script>
+</body>
+</html>
