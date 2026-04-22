@@ -2,24 +2,8 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Whisper 離線字幕產生器</title>
-
-<!-- PWA Manifest -->
-<link rel="manifest" href="/Whisper-srt-convertor/manifest.json">
-
-<!-- iOS PWA -->
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Whisper 字幕">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="apple-touch-icon" href="/Whisper-srt-convertor/icons/apple-touch-icon-180x180.png">
-
-<!-- Android / Chrome -->
-<meta name="theme-color" content="#00e5a0">
-<meta name="mobile-web-app-capable" content="yes">
-
-<!-- PWACompat（自動生成 iOS Splash Screen） -->
-<script async src="https://unpkg.com/pwacompat@2.0.17/pwacompat.min.js" crossorigin="anonymous"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@400;600;800&display=swap');
   
@@ -737,6 +721,251 @@
     margin-bottom: 0.5rem;
   }
   .batch-summary-stats { color: var(--muted); line-height: 1.9; }
+
+  /* ── Post-processing Panel ── */
+  .post-panel {
+    background: var(--panel);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius-lg);
+    margin-bottom: 1rem;
+    overflow: hidden;
+  }
+
+  .post-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s;
+  }
+  .post-panel-header:hover { background: rgba(255,255,255,0.02); }
+
+  .post-panel-title {
+    font-size: 0.72rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .post-panel-chevron {
+    font-size: 0.7rem;
+    color: var(--muted);
+    transition: transform 0.2s;
+  }
+  .post-panel.open .post-panel-chevron { transform: rotate(180deg); }
+
+  .post-panel-body {
+    display: none;
+    padding: 0 1rem 1rem;
+    border-top: 1px solid var(--border);
+  }
+  .post-panel.open .post-panel-body { display: block; }
+
+  .post-section-label {
+    font-size: 0.65rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    margin: 0.9rem 0 0.5rem;
+    opacity: 0.7;
+  }
+
+  .post-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.45rem 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .post-toggle-row:last-child { border-bottom: none; }
+
+  .post-toggle-info { flex: 1; }
+  .post-toggle-name {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 1px;
+  }
+  .post-toggle-desc {
+    font-size: 0.68rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  /* Toggle switch */
+  .toggle-switch {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    flex-shrink: 0;
+    margin-left: 0.75rem;
+  }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background: var(--panel2);
+    border: 1px solid var(--border2);
+    border-radius: 99px;
+    transition: 0.2s;
+  }
+  .toggle-slider::before {
+    content: '';
+    position: absolute;
+    width: 14px; height: 14px;
+    left: 2px; top: 2px;
+    background: var(--muted);
+    border-radius: 50%;
+    transition: 0.2s;
+  }
+  .toggle-switch input:checked + .toggle-slider { background: rgba(0,229,160,0.15); border-color: var(--accent); }
+  .toggle-switch input:checked + .toggle-slider::before { transform: translateX(16px); background: var(--accent); }
+
+  /* Number param inputs under a toggle */
+  .post-params {
+    display: none;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    padding: 0.6rem 0.75rem;
+    background: var(--panel2);
+    border-radius: var(--radius);
+  }
+  .post-params.show { display: grid; }
+  .post-params.cols1 { grid-template-columns: 1fr; }
+
+  .param-group label {
+    display: block;
+    font-size: 0.62rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 3px;
+  }
+  .param-group input[type="number"] {
+    width: 100%;
+    background: var(--panel);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.8rem;
+    font-family: 'IBM Plex Mono', monospace;
+    padding: 0.3rem 0.55rem;
+    outline: none;
+  }
+  .param-group input[type="number"]:focus { border-color: var(--accent); }
+
+  /* Medical dict editor */
+  .dict-editor {
+    display: none;
+    margin-top: 0.6rem;
+  }
+  .dict-editor.show { display: block; }
+
+  .dict-editor-toolbar {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .dict-table-wrap {
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .dict-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.72rem;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .dict-table th {
+    background: var(--panel2);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.62rem;
+    padding: 0.4rem 0.6rem;
+    text-align: left;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    border-bottom: 1px solid var(--border);
+  }
+  .dict-table td {
+    padding: 0.35rem 0.6rem;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    color: var(--text);
+    vertical-align: middle;
+  }
+  .dict-table tr:last-child td { border-bottom: none; }
+  .dict-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .dict-table td input {
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    width: 100%;
+    outline: none;
+    padding: 0;
+  }
+  .dict-table td input:focus { color: var(--accent); }
+  .dict-rm-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 1px 4px;
+    transition: color 0.15s;
+  }
+  .dict-rm-btn:hover { color: var(--err); }
+
+  .dict-add-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr auto;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+  }
+  .dict-add-row input {
+    background: var(--panel2);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    padding: 0.3rem 0.55rem;
+    outline: none;
+  }
+  .dict-add-row input:focus { border-color: var(--accent); }
+  .dict-add-row input::placeholder { color: var(--muted); opacity: 0.6; }
+
+  .post-badge {
+    display: inline-flex;
+    align-items: center;
+    background: rgba(0,229,160,0.1);
+    border: 1px solid rgba(0,229,160,0.2);
+    border-radius: 99px;
+    padding: 2px 8px;
+    font-size: 0.6rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+  }
 </style>
 </head>
 <body>
@@ -870,6 +1099,128 @@
     <div style="display:flex;gap:0.6rem;">
       <button class="btn-sm" id="btnPickOutFolder">📂 選擇輸出資料夾</button>
       <button class="btn-sm danger" id="btnClearOutFolder" style="display:none;">清除資料夾</button>
+    </div>
+  </div>
+
+  <!-- ── 智慧後處理設定面板 ── -->
+  <div class="section-title">智慧後處理</div>
+  <div class="post-panel" id="postPanel">
+    <div class="post-panel-header" id="postPanelHeader">
+      <span class="post-panel-title">
+        ✦ 後處理功能設定
+        <span class="post-badge" id="postActiveBadge">0 項啟用</span>
+      </span>
+      <span class="post-panel-chevron">▾</span>
+    </div>
+    <div class="post-panel-body">
+
+      <div class="post-section-label">排版調整</div>
+
+      <div class="post-toggle-row">
+        <div class="post-toggle-info">
+          <div class="post-toggle-name">合併短行</div>
+          <div class="post-toggle-desc">將連續過短片段合併為一句，改善可讀性</div>
+        </div>
+        <label class="toggle-switch"><input type="checkbox" id="tog_merge"><span class="toggle-slider"></span></label>
+      </div>
+      <div class="post-params" id="params_merge">
+        <div class="param-group"><label>最大字數（中文）</label><input type="number" id="p_merge_chars" value="20" min="5" max="60"></div>
+        <div class="param-group"><label>最大間隔（秒）</label><input type="number" id="p_merge_gap" value="0.5" min="0.1" max="3" step="0.1"></div>
+      </div>
+
+      <div class="post-toggle-row">
+        <div class="post-toggle-info">
+          <div class="post-toggle-name">分割長行</div>
+          <div class="post-toggle-desc">超過字數上限時自動切成兩行，時間軸等比分配</div>
+        </div>
+        <label class="toggle-switch"><input type="checkbox" id="tog_split"><span class="toggle-slider"></span></label>
+      </div>
+      <div class="post-params cols1" id="params_split">
+        <div class="param-group"><label>單行最大字數</label><input type="number" id="p_split_len" value="25" min="10" max="80"></div>
+      </div>
+
+      <div class="post-section-label">時間軸優化</div>
+
+      <div class="post-toggle-row">
+        <div class="post-toggle-info">
+          <div class="post-toggle-name">修正時間軸重疊</div>
+          <div class="post-toggle-desc">自動修正 start &gt; end 及相鄰字幕重疊問題</div>
+        </div>
+        <label class="toggle-switch"><input type="checkbox" id="tog_overlap" checked><span class="toggle-slider"></span></label>
+      </div>
+
+      <div class="post-toggle-row">
+        <div class="post-toggle-info">
+          <div class="post-toggle-name">修正過短顯示時間</div>
+          <div class="post-toggle-desc">確保每句字幕顯示時間不低於最短秒數</div>
+        </div>
+        <label class="toggle-switch"><input type="checkbox" id="tog_mindur"><span class="toggle-slider"></span></label>
+      </div>
+      <div class="post-params cols1" id="params_mindur">
+        <div class="param-group"><label>最短顯示時間（秒）</label><input type="number" id="p_mindur_sec" value="0.8" min="0.3" max="3" step="0.1"></div>
+      </div>
+
+      <div class="post-section-label">文字修正</div>
+
+      <div class="post-toggle-row">
+        <div class="post-toggle-info">
+          <div class="post-toggle-name">自動補全句號</div>
+          <div class="post-toggle-desc">末尾無標點時自動補上句號（依語言用全 / 半形）</div>
+        </div>
+        <label class="toggle-switch"><input type="checkbox" id="tog_period"><span class="toggle-slider"></span></label>
+      </div>
+
+      <div class="post-toggle-row">
+        <div class="post-toggle-info">
+          <div class="post-toggle-name">修正英文大小寫</div>
+          <div class="post-toggle-desc">句首強制大寫（僅英文語系有效）</div>
+        </div>
+        <label class="toggle-switch"><input type="checkbox" id="tog_case"><span class="toggle-slider"></span></label>
+      </div>
+
+      <div class="post-toggle-row">
+        <div class="post-toggle-info">
+          <div class="post-toggle-name">醫學專有名詞標注</div>
+          <div class="post-toggle-desc">辨識醫學術語並在後方加上 [英文對照]，可自訂詞典</div>
+        </div>
+        <label class="toggle-switch"><input type="checkbox" id="tog_medical"><span class="toggle-slider"></span></label>
+      </div>
+      <div class="dict-editor" id="dictEditor">
+        <div class="dict-editor-toolbar">
+          <select id="dictFormatSelect" class="btn-sm" style="cursor:pointer;padding:0.45rem 0.6rem;">
+            <option value="json">JSON</option>
+            <option value="csv">CSV</option>
+            <option value="tsv">TSV（Excel 可開）</option>
+          </select>
+          <button class="btn-sm" id="btnDictImport">📥 匯入</button>
+          <button class="btn-sm" id="btnDictExport">📤 匯出</button>
+          <button class="btn-sm danger" id="btnDictReset">↺ 還原預設</button>
+          <input type="file" id="dictImportFile" accept=".json,.csv,.tsv,.txt" style="display:none">
+        </div>
+        <div class="dict-table-wrap">
+          <table class="dict-table">
+            <thead>
+              <tr>
+                <th>原始／誤辨字（| 分隔）</th>
+                <th>標準中文術語</th>
+                <th>英文對照</th>
+                <th style="width:28px"></th>
+              </tr>
+            </thead>
+            <tbody id="dictTableBody"></tbody>
+          </table>
+        </div>
+        <div class="dict-add-row">
+          <input type="text" id="dictAddRaw" placeholder="原始字，可用 | 分隔多個">
+          <input type="text" id="dictAddZh" placeholder="標準中文術語">
+          <input type="text" id="dictAddEn" placeholder="English Term">
+          <button class="btn-sm" id="btnDictAdd">＋</button>
+        </div>
+        <div style="font-size:0.65rem;font-family:'IBM Plex Mono',monospace;color:var(--muted);margin-top:0.4rem;opacity:0.7;">
+          ℹ 原始字欄可用 | 分隔多個別字／Whisper 誤辨字，均對應同一術語
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -2100,9 +2451,12 @@ async function runInference(file) {
       i++;
     }
 
-    setProgress(96, '產生輸出檔案...', false);
+    setProgress(96, '後處理中...', false);
     resetEta();
-    const chunks = allChunks.filter((c, idx, arr) => idx === 0 || c.text.trim() !== arr[idx - 1].text.trim());
+    const rawChunks = allChunks.filter((c, idx, arr) => idx === 0 || c.text.trim() !== arr[idx - 1].text.trim());
+    const chunks = applyPostProcessing(rawChunks);
+    const postCount = Object.values(getPostConfig()).filter(v => v === true).length;
+    if (postCount > 0) log(`✓ 後處理套用（${postCount} 項）`, 'ok');
     const fmt2 = document.getElementById('outFormat').value;
 
     if (fmt2 === 'srt')       outputContent = chunks.length === 0 ? `1\n00:00:00,000 --> 00:00:05,000\n（無辨識結果）` : chunksToSrt(chunks);
@@ -2305,27 +2659,540 @@ startBtn.addEventListener('click', async () => {
 });
 
 updateModelFolderStatus();
-</script>
 
-<!-- Service Worker 註冊 -->
-<script>
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/Whisper-srt-convertor/sw.js')
-      .then((reg) => {
-        console.log('[PWA] Service Worker 已註冊', reg.scope);
-        reg.addEventListener('updatefound', () => {
-          const newWorker = reg.installing;
-          newWorker.addEventListener('statechange', () => {
-            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-              if (confirm('🆕 有新版本可用，是否立即更新？')) window.location.reload();
-            }
-          });
-        });
-      })
-      .catch((err) => console.warn('[PWA] Service Worker 註冊失敗', err));
+// ═══════════════════════════════════════════════════════════════════
+//  智慧後處理模組 (Smart Post-processing Module)
+// ═══════════════════════════════════════════════════════════════════
+
+// ── 預設醫學詞典 ──────────────────────────────────────────────────
+const DEFAULT_MEDICAL_DICT = [
+  // 心臟科
+  { raw: "心肌梗塞|心肌梗死|心肌哽塞|心基梗塞", zh: "心肌梗塞", en: "Myocardial Infarction" },
+  { raw: "心絞痛|心狹痛|狹心症", zh: "心絞痛", en: "Angina Pectoris" },
+  { raw: "心房顫動|心房纖顫|房顫", zh: "心房顫動", en: "Atrial Fibrillation" },
+  { raw: "心室顫動|室顫", zh: "心室顫動", en: "Ventricular Fibrillation" },
+  { raw: "心臟衰竭|心衰|心臟不全", zh: "心臟衰竭", en: "Heart Failure" },
+  { raw: "心包膜炎|心包炎", zh: "心包膜炎", en: "Pericarditis" },
+  { raw: "主動脈剝離|主動脈夾層", zh: "主動脈剝離", en: "Aortic Dissection" },
+  { raw: "冠狀動脈疾病|冠心病|冠狀動脈心臟病", zh: "冠狀動脈疾病", en: "Coronary Artery Disease" },
+  { raw: "高血壓|血壓高|高壓", zh: "高血壓", en: "Hypertension" },
+  { raw: "低血壓|血壓低", zh: "低血壓", en: "Hypotension" },
+  // 神經科
+  { raw: "腦中風|中風|腦梗塞|腦梗死", zh: "腦中風", en: "Stroke" },
+  { raw: "缺血性中風|缺血性腦中風", zh: "缺血性中風", en: "Ischemic Stroke" },
+  { raw: "出血性中風|腦出血|腦溢血", zh: "出血性中風", en: "Hemorrhagic Stroke" },
+  { raw: "暫時性腦缺血|暫時性缺血|小中風|TIA", zh: "暫時性腦缺血發作", en: "Transient Ischemic Attack" },
+  { raw: "癲癇|癲癇症|腦癇", zh: "癲癇", en: "Epilepsy" },
+  { raw: "帕金森|帕金森氏症|巴金森", zh: "帕金森氏症", en: "Parkinson's Disease" },
+  { raw: "阿茲海默|阿茲海默症|老年失智|失智症", zh: "阿茲海默症", en: "Alzheimer's Disease" },
+  { raw: "多發性硬化症|多發硬化", zh: "多發性硬化症", en: "Multiple Sclerosis" },
+  { raw: "腦膜炎|腦脊膜炎", zh: "腦膜炎", en: "Meningitis" },
+  { raw: "顱內壓升高|顱壓高", zh: "顱內壓升高", en: "Increased Intracranial Pressure" },
+  // 呼吸科
+  { raw: "肺炎|肺部感染", zh: "肺炎", en: "Pneumonia" },
+  { raw: "慢性阻塞性肺病|慢阻肺|COPD", zh: "慢性阻塞性肺病", en: "COPD" },
+  { raw: "氣喘|哮喘|支氣管氣喘", zh: "氣喘", en: "Asthma" },
+  { raw: "肺栓塞|肺血栓", zh: "肺栓塞", en: "Pulmonary Embolism" },
+  { raw: "肺結核|結核病|結核", zh: "肺結核", en: "Tuberculosis" },
+  { raw: "胸膜炎|肋膜炎", zh: "胸膜炎", en: "Pleuritis" },
+  { raw: "氣胸|肺萎陷", zh: "氣胸", en: "Pneumothorax" },
+  { raw: "支氣管炎|氣管炎", zh: "支氣管炎", en: "Bronchitis" },
+  // 消化科
+  { raw: "胃食道逆流|胃酸逆流|逆流性食道炎", zh: "胃食道逆流", en: "GERD" },
+  { raw: "消化性潰瘍|胃潰瘍|十二指腸潰瘍", zh: "消化性潰瘍", en: "Peptic Ulcer" },
+  { raw: "肝硬化|肝纖維化末期", zh: "肝硬化", en: "Liver Cirrhosis" },
+  { raw: "急性胰臟炎|胰臟發炎", zh: "急性胰臟炎", en: "Acute Pancreatitis" },
+  { raw: "克隆氏症|克隆病|克羅恩病", zh: "克隆氏症", en: "Crohn's Disease" },
+  { raw: "潰瘍性結腸炎|潰瘍性大腸炎", zh: "潰瘍性結腸炎", en: "Ulcerative Colitis" },
+  { raw: "腸躁症|腸激躁症|大腸激躁症", zh: "腸躁症", en: "Irritable Bowel Syndrome" },
+  { raw: "膽結石|膽石症", zh: "膽結石", en: "Cholelithiasis" },
+  // 腎臟科
+  { raw: "急性腎損傷|急性腎衰竭|急性腎功能衰竭", zh: "急性腎損傷", en: "Acute Kidney Injury" },
+  { raw: "慢性腎臟病|慢性腎病|慢性腎衰竭", zh: "慢性腎臟病", en: "Chronic Kidney Disease" },
+  { raw: "腎病症候群|腎病綜合症", zh: "腎病症候群", en: "Nephrotic Syndrome" },
+  { raw: "尿路感染|泌尿道感染|膀胱炎", zh: "泌尿道感染", en: "Urinary Tract Infection" },
+  // 內分泌
+  { raw: "糖尿病|血糖高|高血糖症", zh: "糖尿病", en: "Diabetes Mellitus" },
+  { raw: "第一型糖尿病|一型糖尿病|胰島素依賴型", zh: "第一型糖尿病", en: "Type 1 Diabetes" },
+  { raw: "第二型糖尿病|二型糖尿病|非胰島素依賴型", zh: "第二型糖尿病", en: "Type 2 Diabetes" },
+  { raw: "甲狀腺機能亢進|甲亢|甲狀腺亢進", zh: "甲狀腺機能亢進", en: "Hyperthyroidism" },
+  { raw: "甲狀腺機能低下|甲減|甲狀腺低下", zh: "甲狀腺機能低下", en: "Hypothyroidism" },
+  { raw: "庫欣氏症候群|庫欣症|皮質醇增多症", zh: "庫欣氏症候群", en: "Cushing's Syndrome" },
+  { raw: "低血糖|血糖低|低血糖症", zh: "低血糖", en: "Hypoglycemia" },
+  // 感染症
+  { raw: "敗血症|敗血病|血液感染", zh: "敗血症", en: "Sepsis" },
+  { raw: "敗血性休克|感染性休克", zh: "敗血性休克", en: "Septic Shock" },
+  { raw: "愛滋病|人類免疫缺乏病毒|HIV感染", zh: "HIV/愛滋病", en: "HIV/AIDS" },
+  { raw: "流感|流行性感冒", zh: "流行性感冒", en: "Influenza" },
+  // 腫瘤科
+  { raw: "惡性腫瘤|癌症|癌", zh: "惡性腫瘤", en: "Malignant Neoplasm" },
+  { raw: "乳癌|乳腺癌|乳房癌", zh: "乳癌", en: "Breast Cancer" },
+  { raw: "肺癌|肺部惡性腫瘤", zh: "肺癌", en: "Lung Cancer" },
+  { raw: "大腸癌|結直腸癌|結腸癌|直腸癌", zh: "大腸直腸癌", en: "Colorectal Cancer" },
+  { raw: "肝癌|肝細胞癌|肝臟惡性腫瘤", zh: "肝癌", en: "Hepatocellular Carcinoma" },
+  { raw: "白血病|血癌|血液癌症", zh: "白血病", en: "Leukemia" },
+  { raw: "淋巴瘤|惡性淋巴腫", zh: "淋巴瘤", en: "Lymphoma" },
+  // 骨科/風濕科
+  { raw: "類風濕性關節炎|類風濕關節炎|類風濕", zh: "類風濕性關節炎", en: "Rheumatoid Arthritis" },
+  { raw: "全身性紅斑狼瘡|紅斑性狼瘡|狼瘡", zh: "全身性紅斑狼瘡", en: "Systemic Lupus Erythematosus" },
+  { raw: "骨質疏鬆|骨質疏鬆症", zh: "骨質疏鬆症", en: "Osteoporosis" },
+  { raw: "痛風|尿酸高|高尿酸血症", zh: "痛風/高尿酸血症", en: "Gout/Hyperuricemia" },
+  // 精神科
+  { raw: "憂鬱症|抑鬱症|重度憂鬱", zh: "憂鬱症", en: "Major Depressive Disorder" },
+  { raw: "躁鬱症|雙相情感障礙|雙極性疾患", zh: "躁鬱症", en: "Bipolar Disorder" },
+  { raw: "思覺失調症|精神分裂症|精神分裂", zh: "思覺失調症", en: "Schizophrenia" },
+  { raw: "焦慮症|廣泛性焦慮|焦慮障礙", zh: "焦慮症", en: "Anxiety Disorder" },
+  // 常用醫學詞彙
+  { raw: "心電圖|ECG|EKG", zh: "心電圖", en: "Electrocardiogram" },
+  { raw: "電腦斷層|電腦掃描|CT掃描|電腦斷層掃描", zh: "電腦斷層掃描", en: "CT Scan" },
+  { raw: "核磁共振|核磁共振造影|磁振造影|MRI", zh: "磁振造影", en: "MRI" },
+  { raw: "超音波|超聲波", zh: "超音波", en: "Ultrasound" },
+  { raw: "胸部X光|胸腔X光|胸片", zh: "胸部X光", en: "Chest X-Ray" },
+  { raw: "內視鏡|胃鏡|腸鏡", zh: "內視鏡", en: "Endoscopy" },
+  { raw: "血小板|血栓細胞", zh: "血小板", en: "Platelet" },
+  { raw: "白血球|白細胞|嗜中性球", zh: "白血球", en: "White Blood Cell" },
+  { raw: "紅血球|紅細胞", zh: "紅血球", en: "Red Blood Cell" },
+  { raw: "血紅素|血紅蛋白|血色素", zh: "血紅素", en: "Hemoglobin" },
+  { raw: "肌酸酐|肌酐|血清肌酸酐", zh: "肌酸酐", en: "Creatinine" },
+  { raw: "腎絲球過濾率|腎過濾率|GFR", zh: "腎絲球過濾率", en: "GFR" },
+  { raw: "C反應蛋白|發炎指數|CRP", zh: "C 反應蛋白", en: "C-Reactive Protein" },
+  { raw: "降鈣素原|PCT", zh: "降鈣素原", en: "Procalcitonin" },
+  { raw: "腦鈉尿肽|BNP|NT-proBNP", zh: "腦鈉尿肽", en: "BNP/NT-proBNP" },
+];
+
+let medicalDict = JSON.parse(JSON.stringify(DEFAULT_MEDICAL_DICT));
+
+// 建立匹配 trie（扁平化 raw variants → { zh, en }）
+function buildDictMap(dict) {
+  const map = new Map();
+  for (const entry of dict) {
+    const variants = entry.raw.split('|').map(v => v.trim()).filter(Boolean);
+    for (const v of variants) {
+      if (v) map.set(v, { zh: entry.zh, en: entry.en });
+    }
+  }
+  // 依長度由長到短排序，確保優先匹配更長詞彙
+  return new Map([...map.entries()].sort((a, b) => b[0].length - a[0].length));
+}
+
+// ── 後處理核心函式 ────────────────────────────────────────────────
+
+/**
+ * 把 Whisper chunks 轉為標準 subtitle 陣列
+ * { index, start, end, text }
+ */
+function chunksToSubs(chunks) {
+  return chunks
+    .filter(c => c.timestamp && c.timestamp[0] != null)
+    .map((c, i) => ({
+      index: i + 1,
+      start: c.timestamp[0],
+      end:   c.timestamp[1] != null ? Math.max(c.timestamp[1], c.timestamp[0] + 0.001) : c.timestamp[0] + 2,
+      text:  c.text.trim(),
+    }));
+}
+
+/** 把 subtitle 陣列轉回 Whisper chunks 格式 */
+function subsToChunks(subs) {
+  return subs.map(s => ({ text: ' ' + s.text, timestamp: [s.start, s.end] }));
+}
+
+/** 1a. 合併短行 */
+function mergeShortLines(subs, maxChars = 20, maxGap = 0.5) {
+  if (subs.length === 0) return subs;
+  const out = [];
+  let cur = { ...subs[0] };
+  for (let i = 1; i < subs.length; i++) {
+    const next = subs[i];
+    const combinedLen = cur.text.length + next.text.length;
+    const gap = next.start - cur.end;
+    if (combinedLen <= maxChars && gap <= maxGap) {  // gap 可為負值（輕微重疊的 chunk）
+      cur = { ...cur, end: next.end, text: cur.text + next.text };
+    } else {
+      out.push(cur);
+      cur = { ...next };
+    }
+  }
+  out.push(cur);
+  return reIndex(out);
+}
+
+/** 1b. 分割長行 */
+function splitLongLines(subs, maxLen = 25) {
+  const out = [];
+  for (const s of subs) {
+    if (s.text.length <= maxLen) { out.push(s); continue; }
+
+    // 尋找分割點：優先標點符號
+    const half = Math.floor(s.text.length / 2);
+    const puncts = /[，。？！；：,?!;:]/g;
+    let bestIdx = -1, bestDist = Infinity;
+    let m;
+    while ((m = puncts.exec(s.text)) !== null) {
+      const dist = Math.abs(m.index - half);
+      if (dist < bestDist) { bestDist = dist; bestIdx = m.index + 1; }
+    }
+
+    // 若無標點，找空格或直接從中間切
+    if (bestIdx === -1) {
+      const spaceIdx = s.text.indexOf(' ', half);
+      const spaceIdxB = s.text.lastIndexOf(' ', half);
+      if (spaceIdx !== -1 || spaceIdxB !== -1) {
+        const a = spaceIdx !== -1 ? spaceIdx + 1 : s.text.length;
+        const b = spaceIdxB >= 0 ? spaceIdxB + 1 : s.text.length;
+        bestIdx = Math.abs(a - half) <= Math.abs(b - half) ? a : b;
+      } else {
+        bestIdx = half;
+      }
+    }
+
+    const t1 = s.text.slice(0, bestIdx).trim();
+    const t2 = s.text.slice(bestIdx).trim();
+    if (!t2) { out.push(s); continue; }
+
+    const ratio = bestIdx / s.text.length;
+    const mid = s.start + (s.end - s.start) * ratio;
+    out.push({ ...s, end: mid, text: t1 });
+    out.push({ ...s, start: mid, text: t2 });
+  }
+  return reIndex(out);
+}
+
+/** 2a. 修正時間軸重疊 */
+function fixOverlaps(subs) {
+  const out = subs.map(s => ({ ...s }));
+  for (let i = 0; i < out.length; i++) {
+    // 確保 start < end
+    if (out[i].start >= out[i].end) out[i].end = out[i].start + 0.1;
+    // 修正與下一句重疊
+    if (i + 1 < out.length && out[i].end > out[i + 1].start) {
+      out[i].end = out[i + 1].start;
+      if (out[i].end <= out[i].start) out[i].end = out[i].start + 0.001;
+    }
+  }
+  return out;
+}
+
+/** 2b. 修正過短顯示時間 */
+function fixShortDuration(subs, minDur = 0.8) {
+  const out = subs.map(s => ({ ...s }));
+  for (let i = 0; i < out.length; i++) {
+    const dur = out[i].end - out[i].start;
+    if (dur < minDur) {
+      const ideal = out[i].start + minDur;
+      const nextStart = i + 1 < out.length ? out[i + 1].start : Infinity;
+      out[i].end = Math.min(ideal, nextStart - 0.1);
+      if (out[i].end < out[i].start + 0.001) out[i].end = out[i].start + 0.001;
+    }
+  }
+  return out;
+}
+
+/** 3a. 自動補全句號 */
+function addPeriods(subs, language = 'zh') {
+  const fullPunct  = /[。？！；…]/;
+  const halfPunct  = /[.?!;)）]/;  // ) 與 ）為醫學標注結尾，視為句末不補號
+  return subs.map(s => {
+    const last = s.text[s.text.length - 1];
+    if (!last) return s;
+    if (fullPunct.test(last) || halfPunct.test(last)) return s;
+    const period = (language === 'en' || language === 'ja') ? '.' : '。';
+    return { ...s, text: s.text + period };
   });
 }
+
+/** 3b. 修正英文大小寫 */
+function fixCasing(subs) {
+  return subs.map((s, i) => {
+    let text = s.text;
+    // 句首大寫
+    text = text.replace(/^([a-z])/, c => c.toUpperCase());
+    // 若前一句以句末標點結尾，強制本句首字母大寫
+    if (i > 0) {
+      const prev = subs[i - 1].text;
+      if (/[.?!]$/.test(prev)) {
+        text = text.replace(/^([a-z])/, c => c.toUpperCase());
+      }
+    }
+    return { ...s, text };
+  });
+}
+
+/** 3c. 醫學專有名詞標注 */
+function applyMedicalDict(subs, dictMap) {
+  // 用 placeholder 機制避免連鎖替換：先標記位置，最後一次性展開
+  return subs.map(s => {
+    let text = s.text;
+    const placeholders = [];  // [ { marker, zh, en } ]
+
+    for (const [raw, { zh, en }] of dictMap) {
+      const escaped = raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // 避免替換已被標注的位置（marker 格式為 \x00N\x00）
+      const re = new RegExp(`${escaped}(?!\\s*\\()`, 'g');
+      if (!re.test(text)) continue;
+      re.lastIndex = 0;
+
+      const marker = `\x00${placeholders.length}\x00`;
+      placeholders.push({ marker, result: `${zh} (${en})` });
+      text = text.replace(re, marker);
+    }
+
+    // 展開所有 placeholder（由後往前避免 index 錯位）
+    for (let i = placeholders.length - 1; i >= 0; i--) {
+      text = text.split(placeholders[i].marker).join(placeholders[i].result);
+    }
+
+    return { ...s, text };
+  });
+}
+
+/** 工具：重新給 index */
+function reIndex(subs) {
+  return subs.map((s, i) => ({ ...s, index: i + 1 }));
+}
+
+/** 主函式：依 UI 設定套用所有後處理 */
+function applyPostProcessing(chunks) {
+  if (!chunks || chunks.length === 0) return chunks;
+
+  const cfg = getPostConfig();
+  if (!Object.values(cfg).some(v => v !== false && v !== null)) return chunks;
+
+  let subs = chunksToSubs(chunks);
+  if (subs.length === 0) return chunks;
+
+  const lang = document.getElementById('language').value || 'zh';
+
+  if (cfg.merge)   subs = mergeShortLines(subs, cfg.mergeChars, cfg.mergeGap);
+  if (cfg.split)   subs = splitLongLines(subs, cfg.splitLen);
+  if (cfg.overlap) subs = fixOverlaps(subs);
+  if (cfg.minDur)  subs = fixShortDuration(subs, cfg.minDurSec);
+  if (cfg.period)  subs = addPeriods(subs, lang);
+  if (cfg.casing)  subs = fixCasing(subs);
+  if (cfg.medical) {
+    const dictMap = buildDictMap(medicalDict);
+    subs = applyMedicalDict(subs, dictMap);
+  }
+
+  return subsToChunks(subs);
+}
+
+function getPostConfig() {
+  return {
+    merge:      document.getElementById('tog_merge').checked,
+    mergeChars: parseFloat(document.getElementById('p_merge_chars').value) || 20,
+    mergeGap:   parseFloat(document.getElementById('p_merge_gap').value) || 0.5,
+    split:      document.getElementById('tog_split').checked,
+    splitLen:   parseInt(document.getElementById('p_split_len').value) || 25,
+    overlap:    document.getElementById('tog_overlap').checked,
+    minDur:     document.getElementById('tog_mindur').checked,
+    minDurSec:  parseFloat(document.getElementById('p_mindur_sec').value) || 0.8,
+    period:     document.getElementById('tog_period').checked,
+    casing:     document.getElementById('tog_case').checked,
+    medical:    document.getElementById('tog_medical').checked,
+  };
+}
+
+// ── 後處理面板 UI 互動 ────────────────────────────────────────────
+
+// 折疊/展開
+document.getElementById('postPanelHeader').addEventListener('click', () => {
+  document.getElementById('postPanel').classList.toggle('open');
+});
+
+// Toggle → 顯示/隱藏參數區，並更新 badge
+function updatePostBadge() {
+  const toggles = ['tog_merge','tog_split','tog_overlap','tog_mindur','tog_period','tog_case','tog_medical'];
+  const count = toggles.filter(id => document.getElementById(id).checked).length;
+  document.getElementById('postActiveBadge').textContent = `${count} 項啟用`;
+  document.getElementById('postActiveBadge').style.background =
+    count > 0 ? 'rgba(0,229,160,0.15)' : 'rgba(255,255,255,0.05)';
+  document.getElementById('postActiveBadge').style.borderColor =
+    count > 0 ? 'rgba(0,229,160,0.3)' : 'rgba(255,255,255,0.1)';
+  document.getElementById('postActiveBadge').style.color =
+    count > 0 ? 'var(--accent)' : 'var(--muted)';
+}
+
+// 參數折疊對應
+const toggleParamMap = {
+  tog_merge:   'params_merge',
+  tog_split:   'params_split',
+  tog_mindur:  'params_mindur',
+  tog_medical: 'dictEditor',
+};
+
+['tog_merge','tog_split','tog_overlap','tog_mindur','tog_period','tog_case','tog_medical'].forEach(id => {
+  document.getElementById(id).addEventListener('change', () => {
+    if (toggleParamMap[id]) {
+      document.getElementById(toggleParamMap[id]).classList.toggle('show',
+        document.getElementById(id).checked);
+    }
+    updatePostBadge();
+  });
+});
+
+// 預設展開「修正時間軸重疊」已 checked
+updatePostBadge();
+
+// ── 詞典表格 UI ───────────────────────────────────────────────────
+
+function renderDictTable() {
+  const tbody = document.getElementById('dictTableBody');
+  tbody.innerHTML = '';
+  medicalDict.forEach((entry, idx) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="text" value="${escapeHtml(entry.raw)}" data-idx="${idx}" data-field="raw"></td>
+      <td><input type="text" value="${escapeHtml(entry.zh)}" data-idx="${idx}" data-field="zh"></td>
+      <td><input type="text" value="${escapeHtml(entry.en)}" data-idx="${idx}" data-field="en"></td>
+      <td><button class="dict-rm-btn" data-idx="${idx}" title="刪除">✕</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  // inline edit
+  tbody.querySelectorAll('input[data-field]').forEach(inp => {
+    inp.addEventListener('change', e => {
+      const i = parseInt(e.target.dataset.idx);
+      const f = e.target.dataset.field;
+      medicalDict[i][f] = e.target.value;
+    });
+  });
+
+  // remove row
+  tbody.querySelectorAll('.dict-rm-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      medicalDict.splice(parseInt(btn.dataset.idx), 1);
+      renderDictTable();
+    });
+  });
+}
+
+// 新增條目
+document.getElementById('btnDictAdd').addEventListener('click', () => {
+  const raw = document.getElementById('dictAddRaw').value.trim();
+  const zh  = document.getElementById('dictAddZh').value.trim();
+  const en  = document.getElementById('dictAddEn').value.trim();
+  if (!raw || !zh || !en) { log('請填寫原始字、標準術語與英文對照', 'warn'); return; }
+  medicalDict.push({ raw, zh, en });
+  renderDictTable();
+  ['dictAddRaw','dictAddZh','dictAddEn'].forEach(id => { document.getElementById(id).value = ''; });
+});
+
+// 還原預設
+document.getElementById('btnDictReset').addEventListener('click', () => {
+  if (!confirm('確定要還原為預設詞典？自訂條目將全部清除。')) return;
+  medicalDict = JSON.parse(JSON.stringify(DEFAULT_MEDICAL_DICT));
+  renderDictTable();
+  log('醫學詞典已還原為預設', 'ok');
+});
+
+// ── 詞典匯出（JSON / CSV / TSV）────────────────────────────────
+function dictToCsv(sep = ',') {
+  const header = `原始字（|分隔）${sep}標準中文術語${sep}英文對照`;
+  const rows = medicalDict.map(e => {
+    const q = (v) => `"${String(v).replace(/"/g, '""')}"`;
+    return [q(e.raw), q(e.zh), q(e.en)].join(sep);
+  });
+  return [header, ...rows].join('\r\n');
+}
+
+document.getElementById('btnDictExport').addEventListener('click', () => {
+  const fmt = document.getElementById('dictFormatSelect').value;
+  let content, mime, ext;
+  if (fmt === 'csv') {
+    content = '\uFEFF' + dictToCsv(',');   // BOM → Excel 直接辨識 UTF-8
+    mime = 'text/csv;charset=utf-8';
+    ext  = 'csv';
+  } else if (fmt === 'tsv') {
+    content = '\uFEFF' + dictToCsv('\t');
+    mime = 'text/tab-separated-values;charset=utf-8';
+    ext  = 'tsv';
+  } else {
+    content = JSON.stringify(medicalDict, null, 2);
+    mime = 'application/json;charset=utf-8';
+    ext  = 'json';
+  }
+  const blob = new Blob([content], { type: mime });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = `medical-dict.${ext}`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  log(`✓ 詞典已匯出為 ${ext.toUpperCase()}`, 'ok');
+});
+
+// ── 詞典匯入（JSON / CSV / TSV）────────────────────────────────
+function parseCsvLine(line, sep) {
+  // 簡易 RFC 4180：處理引號包覆與跳脫
+  const result = [];
+  let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQ) {
+      if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+      else if (c === '"') { inQ = false; }
+      else { cur += c; }
+    } else {
+      if (c === '"') { inQ = true; }
+      else if (c === sep) { result.push(cur); cur = ''; }
+      else { cur += c; }
+    }
+  }
+  result.push(cur);
+  return result;
+}
+
+function importDelimited(text, sep) {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const entries = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const cols = parseCsvLine(line, sep);
+    if (cols.length < 3) continue;
+    const [rawVal, zhVal, enVal] = cols.map(c => c.trim());
+    // 跳過標題列（第一欄不含 CJK 且第三欄不含英文字母，才視為標題）
+    if (i === 0 && !/[\u4e00-\u9fff]/.test(rawVal) && !/[a-zA-Z]/.test(enVal)) continue;
+    if (rawVal && zhVal && enVal) entries.push({ raw: rawVal, zh: zhVal, en: enVal });
+  }
+  return entries;
+}
+
+document.getElementById('btnDictImport').addEventListener('click', () => {
+  document.getElementById('dictImportFile').click();
+});
+
+document.getElementById('dictImportFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const name = file.name.toLowerCase();
+    let entries;
+    if (name.endsWith('.json')) {
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed)) throw new Error('JSON 格式錯誤：需為陣列');
+      entries = parsed.filter(x => x.raw && x.zh && x.en);
+    } else if (name.endsWith('.tsv') || name.endsWith('.txt')) {
+      entries = importDelimited(text.replace(/^\uFEFF/, ''), '\t');
+    } else {
+      // .csv 或其他，先嘗試逗號，若欄數不足再試 Tab
+      entries = importDelimited(text.replace(/^\uFEFF/, ''), ',');
+      if (entries.length === 0) entries = importDelimited(text.replace(/^\uFEFF/, ''), '\t');
+    }
+    if (entries.length === 0) throw new Error('未找到有效資料列，請確認欄位順序：原始字 / 標準術語 / 英文');
+    medicalDict = entries;
+    renderDictTable();
+    log(`✓ 已匯入 ${entries.length} 條詞典條目`, 'ok');
+  } catch(err) {
+    log('詞典匯入失敗：' + err.message, 'err');
+  }
+  e.target.value = '';
+});
+
+// 初始化詞典表格
+renderDictTable();
 </script>
 </body>
 </html>

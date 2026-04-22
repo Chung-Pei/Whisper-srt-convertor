@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-5.3-brightgreen)
+![Version](https://img.shields.io/badge/version-6.0-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-Browser-orange)
 ![Offline](https://img.shields.io/badge/offline-100%25-success)
@@ -13,7 +13,7 @@
 基於 OpenAI Whisper + Transformers.js，不需伺服器、不上傳任何資料  
 支援 PWA 安裝，可釘選至 iPhone / Android 主畫面離線使用
 
-[快速開始](#-快速開始) · [功能特色](#-功能特色) · [支援格式](#-支援格式) · [PWA 安裝](#-pwa-安裝至主畫面) · [常見問題](#-常見問題)
+[快速開始](#-快速開始) · [功能特色](#-功能特色) · [支援格式](#-支援格式) · [建議裝置](#-建議作業系統與裝置) · [PWA 安裝](#-pwa-安裝至主畫面) · [常見問題](#-常見問題)
 
 </div>
 
@@ -82,6 +82,35 @@
 
 ### 🔄 翻譯模式
 除原語言轉錄外，支援**翻譯成英文**（Whisper translate task）
+
+### 🛠️ 智慧後處理（V6 新增）
+辨識設定下方提供可折疊的**智慧後處理**區塊，顯示已啟用項目數量 badge，共 6 大功能可獨立開關：
+
+| 功能 | 預設 | 說明 |
+|------|------|------|
+| **合併短行** | 關 | 可調最大字數（預設 20）與最大間隔秒數（預設 0.5s），將過短字幕段落合併 |
+| **分割長行** | 關 | 可調單行最大字數（預設 25），從標點 → 空格 → 中間依序嘗試切割 |
+| **修正時間軸重疊** | ✅ 啟用 | 自動修正 start > end 及相鄰段落時間重疊問題 |
+| **修正過短顯示時間** | 關 | 可調最短秒數（預設 0.8s），有防呆機制，不覆蓋下一句時間 |
+| **自動補全句號** | 關 | 依語言自動選擇全形（中日韓）或半形（英文）句號 |
+| **修正英文大小寫** | 關 | 強制句首字母大寫 |
+
+#### 🏥 醫學專有名詞標注（V6 新增）
+- 內建 **70+ 條預設詞典**，涵蓋心臟科、神經科、呼吸科、腫瘤科等多科別
+- 開啟後顯示詞典編輯器，支援**行內編輯**、新增、刪除
+- **一鍵還原預設**，不怕誤改
+
+**詞典匯入 / 匯出（多格式支援）：**
+
+| 格式 | 副檔名 | 說明 |
+|------|--------|------|
+| JSON | `.json` | 標準程式格式，完整保留所有欄位 |
+| CSV | `.csv` | 自動加 BOM，Excel 可直接開啟並正確顯示中文 |
+| TSV | `.tsv` | 適合從 Excel「另存為 TSV」使用 |
+
+- **匯出**：選好格式後一鍵下載
+- **匯入**：依副檔名自動判斷格式（`.json` / `.csv` / `.tsv` / `.txt`），CSV 支援引號包覆與逗號跳脫；若自動判斷失敗，自動改用 Tab 分隔再試一次
+- **CSV 欄位順序**：`原始字（| 分隔）, 標準中文術語, 英文對照`
 
 ### 📱 PWA — 可安裝至主畫面
 本工具支援 Progressive Web App（PWA）規範：
@@ -248,6 +277,35 @@ npx serve .
 
 ### segIdx 驗證（防止竄台）
 批次辨識時，每個 Worker 訊息均攜帶 `segIdx` 欄位，接收端嚴格比對，防止不同段落的回應互相覆蓋（Cross-segment contamination）。
+
+---
+
+## 💻 建議作業系統與裝置
+
+### 桌機 / 筆電（完整功能）
+
+| 作業系統 | 建議瀏覽器 | 備註 |
+|----------|-----------|------|
+| **Windows 10/11** | Chrome / Edge 最新版 | WebGPU + File System Access API 完整支援 |
+| **macOS 12+** | Chrome / Safari 17+ | WebGPU 在 Safari 17+ 可用；File System Access API 僅 Chrome 支援 |
+| **Ubuntu 22.04+** | Chrome 最新版 | WebGPU 需確認 GPU 驅動，部分 Linux 環境降級至 WASM |
+
+> **最佳體驗**：Windows 11 + Chrome 最新版 + 獨立顯示卡（支援 WebGPU）
+
+### 行動裝置（PWA 模式）
+
+| 裝置 | 建議瀏覽器 | 支援功能 |
+|------|-----------|----------|
+| **iPhone 12+（iOS 16.4+）** | Safari | PWA 安裝、離線使用；File System Access API 不支援 |
+| **iPad（iPadOS 16.4+）** | Safari | 同 iPhone；較大 RAM 可跑 `small` 模型 |
+| **Android（Chrome）** | Chrome 最新版 | PWA 安裝、部分裝置支援 WebGPU |
+
+> **行動裝置限制**：受限於 RAM，建議使用 `tiny` 或 `base` 模型。File System Access API（資料夾儲存）在所有行動瀏覽器中均不支援。
+
+### 不建議使用
+- **Firefox**（任何平台）：File System Access API 未完整支援
+- **iOS Chrome / Edge**：底層仍為 WebKit，不支援 PWA 安裝
+- **記憶體 < 4 GB 的裝置**：可能在載入 `small` 以上模型時崩潰
 
 ---
 
@@ -434,6 +492,12 @@ A：請確認開發者已遞增 `sw.js` 中的 `CACHE_VERSION`。您也可以在
 **Q：iPhone 上可以使用 PWA 的推播通知嗎？**  
 A：需要 iOS 16.4+ 且已將 App 安裝至主畫面，才支援 Web Push 通知功能。
 
+**Q：智慧後處理的合併短行和分割長行可以同時開啟嗎？**  
+A：可以。系統會先執行合併，再執行分割，兩者不衝突，可視需求組合使用。
+
+**Q：醫學詞典匯入後格式錯誤怎麼辦？**  
+A：請確認 CSV 欄位順序為「原始字（`|` 分隔）, 標準中文術語, 英文對照」。匯入失敗時系統會自動嘗試 TSV 格式，若仍失敗可改用 JSON 格式匯入。點擊「還原預設」可回到內建詞典。
+
 ---
 
 ## 📜 授權
@@ -447,7 +511,7 @@ Transformers.js 版權歸屬 [Hugging Face](https://huggingface.co/docs/transfor
 
 <div align="center">
 
-**完全離線 · 零資料外傳 · 無需帳號 · PWA 可安裝**
+**完全離線 · 零資料外傳 · 無需帳號 · PWA 可安裝 · 智慧後處理**
 
 Made with ❤️ using [Transformers.js](https://huggingface.co/docs/transformers.js) + OpenAI Whisper
 
