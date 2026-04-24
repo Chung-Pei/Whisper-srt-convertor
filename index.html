@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whisper 離線字幕產生器 v10</title>
+<title>Whisper 離線字幕產生器 v12</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@400;600;800&display=swap');
   
@@ -1119,7 +1119,7 @@
   <header>
     <div class="badge-offline">完全離線 · 無資料外傳</div>
     <h1>Whisper <span>離線</span><br>字幕產生器</h1>
-    <p class="subtitle">// v10 · Silero VAD · 逐字時間戳 · 注音聲學模糊匹配 · 斷點續傳 · 動態記憶體調適</p>
+    <p class="subtitle">// v12 · Transformers.js 4.1.0 · Silero VAD · 逐字時間戳 · 注音聲學模糊匹配 · 斷點續傳 · 動態記憶體調適</p>
   </header>
 
   <div class="section-title">語音模型</div>
@@ -1508,7 +1508,7 @@ function stopMemMonitor() {
 
 // 【核心修復 1】：加入 await 以確保 Transformers.js 模型徹底釋放，防止 OOM
 const WORKER_CODE = `
-const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.2/dist/transformers.min.js';
+const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.1.0/dist/transformers.min.js';
 
 let pipelineFn = null;
 let envRef     = null;
@@ -1601,7 +1601,11 @@ async function loadLib() {
     pipelineFn = mod.pipeline;
     envRef     = mod.env;
     envRef.allowLocalModels = false;
-    envRef.useBrowserCache  = true;
+    // v4 移除了 useBrowserCache，改由瀏覽器 Cache API 自動處理
+    // v3 相容性保留
+    if ('useBrowserCache' in envRef) {
+      envRef.useBrowserCache = true;
+    }
   } catch (e) {
     throw new Error("無法載入 Transformers.js。若是首次使用，請確保網路連線正常以便快取依賴庫；若已離線使用，可能是瀏覽器快取被清除。詳細錯誤: " + e.message);
   }
@@ -1639,11 +1643,21 @@ self.addEventListener('message', async (e) => {
       const gpuAvailable = typeof navigator !== 'undefined' && !!navigator.gpu;
       let device, dtype;
 
+      // onnx-community 命名空間對應表：v4 WebGPU runtime 針對此 namespace 優化
+      // 使用者選取 Xenova/* 時，WebGPU 路徑自動升級至 onnx-community/* 版本
+      const ONNX_COMMUNITY_MAP = {
+        'Xenova/whisper-tiny':   'onnx-community/whisper-tiny',
+        'Xenova/whisper-base':   'onnx-community/whisper-base',
+        'Xenova/whisper-small':  'onnx-community/whisper-small',
+        'Xenova/whisper-medium': 'onnx-community/whisper-small', // medium 無 onnx-community 版，降為 small
+      };
+
       if (gpuAvailable && payload.preferGpu) {
         try {
           const adapter = await navigator.gpu.requestAdapter();
           if (!adapter) throw new Error('no adapter');
           device = 'webgpu';
+          // v4: WebGPU runtime 重寫為 C++，fp16 效能大幅提升
           dtype  = { encoder_model: 'fp16', decoder_model_merged: 'q4' };
           self.postMessage({ type: 'BACKEND', payload: 'webgpu' });
         } catch (_) {
@@ -1657,7 +1671,17 @@ self.addEventListener('message', async (e) => {
         self.postMessage({ type: 'BACKEND', payload: 'wasm' });
       }
 
-      pipe = await pipelineFn('automatic-speech-recognition', payload.modelId, {
+      // WebGPU 路徑：優先使用 onnx-community namespace（v4 WebGPU contrib ops 更完整）
+      // WASM 路徑：維持 Xenova namespace（已驗證穩定）
+      const resolvedModelId = (device === 'webgpu' && ONNX_COMMUNITY_MAP[payload.modelId])
+        ? ONNX_COMMUNITY_MAP[payload.modelId]
+        : payload.modelId;
+
+      if (resolvedModelId !== payload.modelId) {
+        self.postMessage({ type: 'PROGRESS', payload: { status: 'info', message: `WebGPU 模型: ${resolvedModelId}` } });
+      }
+
+      pipe = await pipelineFn('automatic-speech-recognition', resolvedModelId, {
         dtype,
         device,
         progress_callback: (x) => self.postMessage({ type: 'PROGRESS', payload: x }),
@@ -1752,6 +1776,276 @@ function createWorker() {
   return inferenceWorker;
 }
 
+// ══════════════════════════════════════════════════════════════════════
+//  音訊解碼 Worker（WebCodecs AudioDecoder）
+//  支援格式：MP4/M4A (AAC-LC)
+//  WebCodecs 在 Worker 內可用（Chrome 94+/Edge 94+/Safari 16.4+）
+//  回傳 Float32Array @ 16kHz mono，主執行緒完全不阻塞
+//  不支援的格式 → 主執行緒 fallback（decodeAudioData）
+// ══════════════════════════════════════════════════════════════════════
+const AUDIO_DECODE_WORKER_CODE = `
+function resampleLinear(input, srcRate, dstRate) {
+  if (srcRate === dstRate) return input;
+  const ratio  = srcRate / dstRate;
+  const outLen = Math.round(input.length * dstRate / srcRate);
+  const out    = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const srcIdx = i * ratio;
+    const lo     = Math.floor(srcIdx);
+    const hi     = Math.min(lo + 1, input.length - 1);
+    out[i]       = input[lo] * (1 - (srcIdx - lo)) + input[hi] * (srcIdx - lo);
+  }
+  return out;
+}
+
+function audioDataToMono(audioData) {
+  const nch = audioData.numberOfChannels;
+  const nfr = audioData.numberOfFrames;
+  const sr  = audioData.sampleRate;
+  if (nch === 1) {
+    const buf = new Float32Array(nfr);
+    audioData.copyTo(buf, { planeIndex: 0, format: 'f32-planar' });
+    return { samples: buf, sampleRate: sr };
+  }
+  const channels = [];
+  for (let c = 0; c < nch; c++) {
+    const ch = new Float32Array(nfr);
+    audioData.copyTo(ch, { planeIndex: c, format: 'f32-planar' });
+    channels.push(ch);
+  }
+  const mono = new Float32Array(nfr);
+  for (let s = 0; s < nfr; s++) {
+    let sum = 0;
+    for (let c = 0; c < nch; c++) sum += channels[c][s];
+    mono[s] = sum / nch;
+  }
+  return { samples: mono, sampleRate: sr };
+}
+
+function detectMime(u8) {
+  if (u8[4]===0x66 && u8[5]===0x74 && u8[6]===0x79 && u8[7]===0x70) return 'mp4';
+  return null;
+}
+
+function parseMp4Audio(buf) {
+  try {
+    const view = new DataView(buf);
+    const u8   = new Uint8Array(buf);
+    let off = 0;
+    const fileEnd = buf.byteLength;
+
+    function readBox(end) {
+      if (off + 8 > end) return null;
+      let size = view.getUint32(off, false);
+      const type = String.fromCharCode(u8[off+4],u8[off+5],u8[off+6],u8[off+7]);
+      const boxStart = off; off += 8;
+      if (size === 1) { size = Number(view.getBigUint64(off-8+8, false)); }
+      if (size === 0) size = end - boxStart;
+      return { type, size, start: boxStart, dataStart: off, end: boxStart + size };
+    }
+
+    function findBox(containerEnd, ...names) {
+      const saved = off;
+      while (off < containerEnd - 8) {
+        const box = readBox(containerEnd);
+        if (!box) break;
+        if (names.includes(box.type)) return box;
+        off = box.end;
+      }
+      off = saved; return null;
+    }
+
+    let moov = null;
+    while (off < fileEnd - 8) {
+      const box = readBox(fileEnd);
+      if (!box) break;
+      if (box.type === 'moov') { moov = box; break; }
+      off = box.end;
+    }
+    if (!moov) return null;
+
+    let audioTrak = null;
+    let tOff = moov.dataStart;
+    while (tOff < moov.end - 8) {
+      off = tOff;
+      const box = readBox(moov.end);
+      if (!box) break;
+      if (box.type === 'trak') {
+        off = box.dataStart;
+        const mdia2 = findBox(box.end, 'mdia');
+        if (mdia2) {
+          off = mdia2.dataStart;
+          const hdlr = findBox(mdia2.end, 'hdlr');
+          if (hdlr) {
+            const ht = String.fromCharCode(u8[hdlr.dataStart+8],u8[hdlr.dataStart+9],u8[hdlr.dataStart+10],u8[hdlr.dataStart+11]);
+            if (ht === 'soun') { audioTrak = box; break; }
+          }
+        }
+      }
+      tOff = box.end;
+    }
+    if (!audioTrak) return null;
+
+    off = audioTrak.dataStart;
+    const mdia = findBox(audioTrak.end, 'mdia'); if (!mdia) return null;
+    off = mdia.dataStart;
+    const minf = findBox(mdia.end, 'minf'); if (!minf) return null;
+    off = minf.dataStart;
+    const stbl = findBox(minf.end, 'stbl'); if (!stbl) return null;
+    off = stbl.dataStart;
+    const stsd = findBox(stbl.end, 'stsd'); if (!stsd) return null;
+
+    off = stsd.dataStart + 8;
+    const mp4aStart = off;
+    const mp4aType  = String.fromCharCode(u8[off+4],u8[off+5],u8[off+6],u8[off+7]);
+    if (mp4aType !== 'mp4a') return null;
+    const channels   = view.getUint16(mp4aStart + 8 + 16, false);
+    const sampleRate = view.getUint32(mp4aStart + 8 + 24, false) >>> 16;
+    const mp4aSize   = view.getUint32(mp4aStart, false);
+    off = mp4aStart + 28;
+
+    const esds = findBox(mp4aStart + mp4aSize, 'esds'); if (!esds) return null;
+    let ep = esds.dataStart + 4;
+    function readTag() {
+      let tag = u8[ep++], size = 0;
+      for (let i = 0; i < 4; i++) { const b=u8[ep++]; size=(size<<7)|(b&0x7F); if(!(b&0x80)) break; }
+      return { tag, size };
+    }
+    readTag(); ep += 3;
+    readTag(); ep += 13;
+    const dsiTag = readTag();
+    const description = u8.slice(ep, ep + dsiTag.size);
+
+    off = stbl.dataStart;
+    const stts = findBox(stbl.end, 'stts'); if (!stts) return null;
+    off = stts.dataStart + 4;
+    const sttsCount = view.getUint32(off, false); off += 4;
+    const sttsPairs = [];
+    for (let i = 0; i < sttsCount; i++) { sttsPairs.push({ count: view.getUint32(off,false), delta: view.getUint32(off+4,false) }); off += 8; }
+
+    off = stbl.dataStart;
+    const stsz = findBox(stbl.end, 'stsz'); if (!stsz) return null;
+    off = stsz.dataStart + 4;
+    const defSize     = view.getUint32(off, false); off += 4;
+    const sampleCount = view.getUint32(off, false); off += 4;
+    const sampleSizes = new Uint32Array(sampleCount);
+    if (defSize === 0) { for (let i=0;i<sampleCount;i++) { sampleSizes[i]=view.getUint32(off,false); off+=4; } }
+    else sampleSizes.fill(defSize);
+
+    off = stbl.dataStart;
+    const stco = findBox(stbl.end, 'stco');
+    let chunkOffsets;
+    if (stco) {
+      off = stco.dataStart + 4;
+      const cnt = view.getUint32(off,false); off += 4;
+      chunkOffsets = new Array(cnt);
+      for (let i=0;i<cnt;i++) { chunkOffsets[i]=view.getUint32(off,false); off+=4; }
+    } else {
+      off = stbl.dataStart;
+      const co64 = findBox(stbl.end, 'co64'); if (!co64) return null;
+      off = co64.dataStart + 4;
+      const cnt = view.getUint32(off,false); off += 4;
+      chunkOffsets = new Array(cnt);
+      for (let i=0;i<cnt;i++) { const hi=view.getUint32(off,false),lo=view.getUint32(off+4,false); chunkOffsets[i]=hi*0x100000000+lo; off+=8; }
+    }
+
+    off = stbl.dataStart;
+    const stsc = findBox(stbl.end, 'stsc'); if (!stsc) return null;
+    off = stsc.dataStart + 4;
+    const stscCount = view.getUint32(off,false); off += 4;
+    const stscEntries = [];
+    for (let i=0;i<stscCount;i++) { stscEntries.push({ firstChunk:view.getUint32(off,false), samplesPerChunk:view.getUint32(off+4,false) }); off+=12; }
+
+    const sampleOffsets = new Array(sampleCount);
+    let si = 0;
+    for (let ci=0; ci<stscEntries.length; ci++) {
+      const e = stscEntries[ci];
+      const nextFC = ci+1 < stscEntries.length ? stscEntries[ci+1].firstChunk : chunkOffsets.length+1;
+      for (let chunk=e.firstChunk; chunk<nextFC && si<sampleCount; chunk++) {
+        let bOff = chunkOffsets[chunk-1];
+        for (let s=0; s<e.samplesPerChunk && si<sampleCount; s++) { sampleOffsets[si]=bOff; bOff+=sampleSizes[si]; si++; }
+      }
+    }
+
+    const durations = new Uint32Array(sampleCount);
+    let di=0;
+    for (const {count,delta} of sttsPairs) { for (let k=0;k<count&&di<sampleCount;k++) durations[di++]=delta; }
+
+    const chunks = [];
+    let timestamp = 0;
+    for (let i=0; i<sampleCount; i++) {
+      const data  = u8.slice(sampleOffsets[i], sampleOffsets[i]+sampleSizes[i]);
+      const durUs = Math.round(durations[i]*1_000_000/sampleRate);
+      const tsUs  = Math.round(timestamp*1_000_000/sampleRate);
+      chunks.push(new EncodedAudioChunk({ type:'key', timestamp:tsUs, duration:durUs, data }));
+      timestamp += durations[i];
+    }
+    return { codec:'mp4a.40.2', sampleRate, channels, description, chunks };
+  } catch(e) { return null; }
+}
+
+self.addEventListener('message', async (e) => {
+  if (e.data.type !== 'DECODE') return;
+  const arrayBuffer = e.data.payload;
+  try {
+    if (typeof AudioDecoder === 'undefined') { self.postMessage({ type:'FALLBACK' }); return; }
+    const u8h   = new Uint8Array(arrayBuffer, 0, Math.min(12, arrayBuffer.byteLength));
+    const mime  = detectMime(u8h);
+    if (!mime) { self.postMessage({ type:'FALLBACK' }); return; }
+    const info  = parseMp4Audio(arrayBuffer);
+    if (!info)  { self.postMessage({ type:'FALLBACK' }); return; }
+    const sup   = await AudioDecoder.isConfigSupported({ codec:info.codec, sampleRate:info.sampleRate, numberOfChannels:info.channels, description:info.description });
+    if (!sup.supported) { self.postMessage({ type:'FALLBACK' }); return; }
+    const pcmChunks = [];
+    const decoder = new AudioDecoder({
+      output: (ad) => {
+        const { samples, sampleRate } = audioDataToMono(ad);
+        pcmChunks.push(resampleLinear(samples, sampleRate, 16000));
+        ad.close();
+      },
+      error: () => self.postMessage({ type:'FALLBACK' }),
+    });
+    decoder.configure(sup.config);
+    for (const chunk of info.chunks) decoder.decode(chunk);
+    await decoder.flush();
+    decoder.close();
+    let total = 0; for (const c of pcmChunks) total += c.length;
+    const merged = new Float32Array(total);
+    let woff = 0; for (const c of pcmChunks) { merged.set(c, woff); woff += c.length; }
+    self.postMessage({ type:'DONE', samples: merged }, [merged.buffer]);
+  } catch(err) {
+    self.postMessage({ type:'FALLBACK', error: err.message });
+  }
+});
+`;
+
+let _audioDecodeWorker = null;
+function getAudioDecodeWorker() {
+  if (_audioDecodeWorker) return _audioDecodeWorker;
+  const blob    = new Blob([AUDIO_DECODE_WORKER_CODE], { type: 'application/javascript' });
+  const blobUrl = URL.createObjectURL(blob);
+  _audioDecodeWorker = new Worker(blobUrl);
+  URL.revokeObjectURL(blobUrl);
+  return _audioDecodeWorker;
+}
+
+// 嘗試 WebCodecs Worker 解碼（MP4/M4A），失敗回 null → 主執行緒 fallback
+async function tryDecodeViaWorker(arrayBuffer) {
+  return new Promise((resolve) => {
+    if (typeof AudioDecoder === 'undefined') return resolve(null);
+    let worker;
+    try { worker = getAudioDecodeWorker(); } catch { return resolve(null); }
+    const timer = setTimeout(() => { worker.removeEventListener('message', handler); resolve(null); }, 120_000);
+    function handler(ev) {
+      clearTimeout(timer);
+      worker.removeEventListener('message', handler);
+      resolve(ev.data.type === 'DONE' ? ev.data.samples : null);
+    }
+    worker.addEventListener('message', handler);
+    worker.postMessage({ type: 'DECODE', payload: arrayBuffer }, [arrayBuffer]);
+  });
+}
+
 function workerCall(worker, msgType, payload, resolveOn, timeoutMs = 300000) { // 【修復 2】：延長推論時間至 300 秒，避免 large-v3 中斷
   return new Promise((resolve, reject) => {
     let timer = null;
@@ -1800,16 +2094,68 @@ function getAvailableMemoryMB() {
 
 function isWebGPUSupported() { return typeof navigator !== 'undefined' && !!navigator.gpu; }
 
-function chooseDtype(modelId) {
+// ── chooseDtype v2：優先使用 ModelRegistry.get_available_dtypes()（transformers.js v4）
+//   若 ModelRegistry 無法取得，降回靜態 sizeMap 邏輯（v3 相容）
+const _dtypeCache = new Map();   // modelId → 已解析的 dtype string
+let   _modelRegistryRef = null;  // 懶載入 ModelRegistry
+
+async function _loadModelRegistry() {
+  if (_modelRegistryRef) return _modelRegistryRef;
+  try {
+    const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.1.0/dist/transformers.min.js';
+    const mod = await import(TRANSFORMERS_URL);
+    _modelRegistryRef = mod.ModelRegistry ?? null;
+  } catch { _modelRegistryRef = null; }
+  return _modelRegistryRef;
+}
+
+function _dtypeFallback(modelId) {
   const available = getAvailableMemoryMB();
   const sizeMap = {
+    // Xenova namespace
     'Xenova/whisper-tiny': 75, 'Xenova/whisper-base': 145, 'Xenova/whisper-small': 460,
     'Xenova/whisper-medium': 1500, 'onnx-community/whisper-large-v3-turbo': 1600,
+    // onnx-community namespace（v4 WebGPU 路徑）
+    'onnx-community/whisper-tiny': 75, 'onnx-community/whisper-base': 145,
+    'onnx-community/whisper-small': 460,
   };
   const modelMB = sizeMap[modelId] ?? 500;
   if (available < modelMB * 3) return 'q4';
   if (available < modelMB * 5) return 'q8';
   return 'fp32';
+}
+
+async function chooseDtype(modelId) {
+  if (_dtypeCache.has(modelId)) return _dtypeCache.get(modelId);
+
+  let dtype = null;
+
+  try {
+    const registry = await Promise.race([
+      _loadModelRegistry(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
+    ]);
+    if (registry?.get_available_dtypes) {
+      const available  = getAvailableMemoryMB();
+      const dtypes     = await registry.get_available_dtypes(modelId);
+      // 依記憶體壓力選取最佳格式：記憶體充足優先 fp16/q8；不足則選 q4
+      const preferred  = available > 3000
+        ? ['fp16', 'q8', 'q4', 'fp32']   // 記憶體充足：fp16 優先（WebGPU 最快）
+        : available > 1200
+        ? ['q8', 'q4', 'fp16', 'fp32']   // 中等記憶體
+        : ['q4', 'q8', 'fp16', 'fp32'];  // 記憶體吃緊
+      dtype = preferred.find(d => dtypes.includes(d)) ?? dtypes[0] ?? 'fp32';
+      log(`ModelRegistry dtype 查詢完成：${modelId} → 可用 [${dtypes.join(', ')}]，選取 ${dtype}`, 'info');
+    }
+  } catch { /* 靜默 fallback */ }
+
+  if (!dtype) {
+    dtype = _dtypeFallback(modelId);
+    log(`dtype fallback（靜態）：${modelId} → ${dtype}`, 'info');
+  }
+
+  _dtypeCache.set(modelId, dtype);
+  return dtype;
 }
 
 function formatSize(b) {
@@ -2075,7 +2421,6 @@ document.querySelectorAll('.model-btn').forEach(btn => {
     }
 
     selectedModel = newModel;
-    const dtype  = chooseDtype(selectedModel);
     const hasGpu = isWebGPUSupported();
     const infoBox = document.getElementById('infoBox');
     infoBox.textContent = '';
@@ -2085,7 +2430,11 @@ document.querySelectorAll('.model-btn').forEach(btn => {
     const br = document.createElement('br');
     const hint = document.createElement('span');
     hint.style.cssText = 'color:var(--warn);font-size:0.72em;';
-    hint.textContent = `⚙ 量化：${dtype} ／ 後端：${hasGpu ? '⚡ WebGPU' : '⚪ WASM'}`;
+    hint.textContent = `⚙ 量化：查詢中… ／ 後端：${hasGpu ? '⚡ WebGPU' : '⚪ WASM'}`;
+    // 非同步查詢 ModelRegistry 後更新提示
+    chooseDtype(selectedModel).then(dtype => {
+      hint.textContent = `⚙ 量化：${dtype} ／ 後端：${hasGpu ? '⚡ WebGPU' : '⚪ WASM'}`;
+    });
     infoBox.appendChild(strong);
     infoBox.appendChild(textNode);
     infoBox.appendChild(br);
@@ -2357,51 +2706,69 @@ async function readAudioShard(cacheKey, shardIdx) {
 
 async function decodeAudio(file) {
   await _initIdbPromise;
-  
-  log('解碼音訊中...', 'info');
-  const arrayBuf = await file.arrayBuffer();
-  if (isCancelled) throw new Error('CANCELLED');
-
-  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  let decoded;
-  try {
-    decoded = await audioCtx.decodeAudioData(arrayBuf);
-  } catch (decodeErr) {
-    audioCtx.close();
-    throw new Error('音訊解碼失敗：' + decodeErr.message);
-  }
-  audioCtx.close();
 
   const TARGET_SR = 16000;
-  let mono;
-  if (decoded.numberOfChannels === 1) {
-    mono = decoded.getChannelData(0).slice();
-  } else {
-    const numCh = decoded.numberOfChannels;
-    const len   = decoded.getChannelData(0).length;
-    mono = new Float32Array(len);
-    for (let ch = 0; ch < numCh; ch++) {
-      const chData = decoded.getChannelData(ch);
-      for (let s = 0; s < len; s++) mono[s] += chData[s];
-    }
-    for (let s = 0; s < len; s++) mono[s] /= numCh;
-  }
-  
-  const originalSampleRate = decoded.sampleRate;
-  decoded = null; 
+  let mono = null;
 
-  if (originalSampleRate !== TARGET_SR) {
-    log(`重取樣：${originalSampleRate}Hz → ${TARGET_SR}Hz`, 'info');
-    const targetLen = Math.round(mono.length * TARGET_SR / originalSampleRate);
-    const offlineCtx = new OfflineAudioContext(1, targetLen, TARGET_SR);
-    const buf = offlineCtx.createBuffer(1, mono.length, originalSampleRate);
-    buf.copyToChannel(mono, 0);
-    const src = offlineCtx.createBufferSource();
-    src.buffer = buf;
-    src.connect(offlineCtx.destination);
-    src.start(0);
-    const resampled = await offlineCtx.startRendering();
-    mono = resampled.getChannelData(0).slice();
+  // ── 路徑 A：WebCodecs Worker（MP4/M4A，不阻塞主執行緒）─────────
+  const ext = file.name.split('.').pop().toLowerCase();
+  const useWorkerPath = ['mp4', 'm4a', 'mov'].includes(ext) && typeof AudioDecoder !== 'undefined';
+  if (useWorkerPath) {
+    log('解碼音訊中（WebCodecs Worker）...', 'info');
+    const arrayBuf = await file.arrayBuffer();
+    if (isCancelled) throw new Error('CANCELLED');
+    mono = await tryDecodeViaWorker(arrayBuf);
+    if (mono) {
+      log('✓ WebCodecs Worker 解碼完成', 'ok');
+    } else {
+      log('⚠ WebCodecs 解碼失敗，切換至主執行緒模式', 'warn');
+    }
+  }
+
+  // ── 路徑 B：主執行緒 decodeAudioData（通用 fallback）──────────
+  if (!mono) {
+    log('解碼音訊中...', 'info');
+    const arrayBuf2 = await file.arrayBuffer();
+    if (isCancelled) throw new Error('CANCELLED');
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    let decoded;
+    try {
+      decoded = await audioCtx.decodeAudioData(arrayBuf2);
+    } catch (decodeErr) {
+      audioCtx.close();
+      throw new Error('音訊解碼失敗：' + decodeErr.message);
+    }
+    audioCtx.close();
+
+    if (decoded.numberOfChannels === 1) {
+      mono = decoded.getChannelData(0).slice();
+    } else {
+      const numCh = decoded.numberOfChannels;
+      const len   = decoded.getChannelData(0).length;
+      mono = new Float32Array(len);
+      for (let ch = 0; ch < numCh; ch++) {
+        const chData = decoded.getChannelData(ch);
+        for (let s = 0; s < len; s++) mono[s] += chData[s];
+      }
+      for (let s = 0; s < len; s++) mono[s] /= numCh;
+    }
+
+    const originalSampleRate = decoded.sampleRate;
+    decoded = null;
+
+    if (originalSampleRate !== TARGET_SR) {
+      log(`重取樣：${originalSampleRate}Hz → ${TARGET_SR}Hz`, 'info');
+      const targetLen  = Math.round(mono.length * TARGET_SR / originalSampleRate);
+      const offlineCtx = new OfflineAudioContext(1, targetLen, TARGET_SR);
+      const buf        = offlineCtx.createBuffer(1, mono.length, originalSampleRate);
+      buf.copyToChannel(mono, 0);
+      const src = offlineCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(offlineCtx.destination);
+      src.start(0);
+      const resampled = await offlineCtx.startRendering();
+      mono = resampled.getChannelData(0).slice();
+    }
   }
 
   // ── 音訊正規化（Peak Normalization → -1dBTP）────────────────────
@@ -2424,6 +2791,7 @@ async function decodeAudio(file) {
       log('⚠ IndexedDB 儲存失敗，降級使用記憶體模式處理大檔案', 'warn');
       if (!mono) {
         log('⚠ 記憶體已釋放，重新解碼音訊...', 'warn');
+        // 重新走主執行緒 fallback 路徑（此時 mono 已被清空）
         const arrayBuf2 = await file.arrayBuffer();
         const audioCtx2 = new (window.AudioContext || window.webkitAudioContext)();
         let decoded2;
@@ -2448,7 +2816,6 @@ async function decodeAudio(file) {
           for (let s = 0; s < len2; s++) mono[s] /= numCh2;
         }
         decoded2 = null;
-        // 補上重取樣至 16kHz（與主路徑一致）
         if (origSR2 !== TARGET_SR) {
           const targetLen2 = Math.round(mono.length * TARGET_SR / origSR2);
           const offCtx2 = new OfflineAudioContext(1, targetLen2, TARGET_SR);
@@ -2490,8 +2857,8 @@ function applyPeakNormalization(samples) {
 //  首次使用需連網下載 ~2MB；之後由 modelFolderHandle 資料夾優先讀取
 // ══════════════════════════════════════════════════════════════════════
 
-const VAD_WEB_CDN   = 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.22/dist/';
-const ONNX_WASM_CDN = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/';
+const VAD_WEB_CDN   = 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.30/dist/';
+const ONNX_WASM_CDN = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/';
 
 let _vadInstance = null;
 let _vadLoading  = false;
@@ -2501,7 +2868,8 @@ async function ensureVadScripts() {
   if (_vadScriptsLoaded || window.vad) { _vadScriptsLoaded = true; return; }
   await new Promise((resolve, reject) => {
     const ortScript = document.createElement('script');
-    ortScript.src = ONNX_WASM_CDN + 'ort.min.js';
+    // onnxruntime-web 1.19+ 主入口更名為 ort.all.min.js（完整 WASM+WebGPU bundle）
+    ortScript.src = ONNX_WASM_CDN + 'ort.all.min.js';
     ortScript.onload = () => {
       const vadScript = document.createElement('script');
       vadScript.src = VAD_WEB_CDN + 'bundle.min.js';
@@ -2509,7 +2877,20 @@ async function ensureVadScripts() {
       vadScript.onerror = () => reject(new Error('vad-web bundle 載入失敗（請確認網路連線）'));
       document.head.appendChild(vadScript);
     };
-    ortScript.onerror = () => reject(new Error('onnxruntime-web 載入失敗（請確認網路連線）'));
+    // 若 ort.all.min.js 不存在則 fallback 到舊版檔名
+    ortScript.onerror = () => {
+      const ortFallback = document.createElement('script');
+      ortFallback.src = ONNX_WASM_CDN + 'ort.min.js';
+      ortFallback.onload = () => {
+        const vadScript = document.createElement('script');
+        vadScript.src = VAD_WEB_CDN + 'bundle.min.js';
+        vadScript.onload  = () => { _vadScriptsLoaded = true; resolve(); };
+        vadScript.onerror = () => reject(new Error('vad-web bundle 載入失敗（請確認網路連線）'));
+        document.head.appendChild(vadScript);
+      };
+      ortFallback.onerror = () => reject(new Error('onnxruntime-web 載入失敗（請確認網路連線）'));
+      document.head.appendChild(ortFallback);
+    };
     document.head.appendChild(ortScript);
   });
 }
@@ -2769,7 +3150,7 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
       log(`載入模型：${selectedModel}（首次需下載）`, 'info');
       setProgress(0, '下載/載入模型...', true);
 
-      const dtype     = chooseDtype(selectedModel);
+      const dtype     = await chooseDtype(selectedModel);
       const preferGpu = isWebGPUSupported();
       
       const progressHandler = (e) => {
@@ -2922,7 +3303,7 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
 
       if (evt.type === 'MEMORY_PRESSURE') {
         log(`⚠ 記憶體壓力，重載模型...`, 'warn');
-        const dtype = chooseDtype(selectedModel);
+        const dtype = await chooseDtype(selectedModel);
         worker = createWorker();
         inferenceWorker = worker;
         workerReady = false;
