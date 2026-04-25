@@ -1119,7 +1119,7 @@
   <header>
     <div class="badge-offline">完全離線 · 無資料外傳</div>
     <h1>Whisper <span>離線</span><br>字幕產生器</h1>
-    <p class="subtitle">// v12 · Transformers.js 4.1.0 · Silero VAD · 逐字時間戳 · 注音聲學模糊匹配 · 斷點續傳 · 動態記憶體調適</p>
+    <p class="subtitle">// v12 · Transformers.js 3.5.2 · Silero VAD · 逐字時間戳 · 注音聲學模糊匹配 · 斷點續傳 · 動態記憶體調適</p>
   </header>
 
   <div class="section-title">語音模型</div>
@@ -1364,6 +1364,22 @@
       <div class="post-params cols1" id="params_fuzzy" style="display:grid;">
         <div class="param-group"><label>相似度閾值（1=完全一致 / 0.55=較寬鬆）</label><input type="number" id="p_fuzzy_threshold" value="0.65" min="0.5" max="0.95" step="0.05"></div>
       </div>
+
+      <div class="post-toggle-row" style="border-top:1px solid rgba(255,255,255,0.04);margin-top:0.2rem;padding-top:0.45rem;">
+        <div class="post-toggle-info">
+          <div class="post-toggle-name">👥 說話者標籤（Diarization）<span class="fuzzy-badge" style="background:rgba(80,120,220,0.18);color:#7090e8;">實驗性</span></div>
+          <div class="post-toggle-desc">使用 pyannote-segmentation-3.0 識別多位說話者，在字幕前加上 [說話者 A/B/C] 標籤（首次需下載 ~18MB 模型）</div>
+        </div>
+        <label class="toggle-switch"><input type="checkbox" id="tog_diarization"><span class="toggle-slider"></span></label>
+      </div>
+          <div class="post-toggle-desc">偵測 Whisper 常見幻覺症狀（重複詞組、長靜音後突發字幕、速度異常段落），以 ⚠ 標記可疑字幕</div>
+        </div>
+        <label class="toggle-switch"><input type="checkbox" id="tog_hallucination"><span class="toggle-slider"></span></label>
+      </div>
+      <div class="post-params cols2" id="params_hallucination" style="display:none;">
+        <div class="param-group"><label>靜音偵測閾值（秒）gap 超過此值視為可疑</label><input type="number" id="p_halluc_gap" value="3.0" min="1.0" max="10.0" step="0.5"></div>
+        <div class="param-group"><label>速度閾值（字/秒）超過視為可疑</label><input type="number" id="p_halluc_speed" value="12" min="6" max="30" step="1"></div>
+      </div>
       <div class="dict-editor" id="dictEditor">
         <div class="dict-editor-toolbar">
           <select id="dictFormatSelect" class="btn-sm" style="cursor:pointer;padding:0.45rem 0.6rem;">
@@ -1413,6 +1429,9 @@
   <div class="batch-summary" id="batchSummary">
     <div class="batch-summary-title">批次辨識完成</div>
     <div class="batch-summary-stats" id="batchSummaryStats"></div>
+    <button id="btnDownloadZip" style="display:none;margin-top:0.75rem;width:100%;padding:0.55rem 1rem;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:0.85rem;cursor:pointer;font-family:var(--font-mono);">
+      ⬇ 全部打包下載 ZIP
+    </button>
   </div>
 
   <div class="prog-area" id="progArea">
@@ -1508,7 +1527,7 @@ function stopMemMonitor() {
 
 // 【核心修復 1】：加入 await 以確保 Transformers.js 模型徹底釋放，防止 OOM
 const WORKER_CODE = `
-const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.1.0/dist/transformers.min.js';
+const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@3.5.2/dist/transformers.min.js';
 
 let pipelineFn = null;
 let envRef     = null;
@@ -1601,11 +1620,7 @@ async function loadLib() {
     pipelineFn = mod.pipeline;
     envRef     = mod.env;
     envRef.allowLocalModels = false;
-    // v4 移除了 useBrowserCache，改由瀏覽器 Cache API 自動處理
-    // v3 相容性保留
-    if ('useBrowserCache' in envRef) {
-      envRef.useBrowserCache = true;
-    }
+    envRef.useBrowserCache  = true;  // v3 使用此設定
   } catch (e) {
     throw new Error("無法載入 Transformers.js。若是首次使用，請確保網路連線正常以便快取依賴庫；若已離線使用，可能是瀏覽器快取被清除。詳細錯誤: " + e.message);
   }
@@ -1643,21 +1658,15 @@ self.addEventListener('message', async (e) => {
       const gpuAvailable = typeof navigator !== 'undefined' && !!navigator.gpu;
       let device, dtype;
 
-      // onnx-community 命名空間對應表：v4 WebGPU runtime 針對此 namespace 優化
-      // 使用者選取 Xenova/* 時，WebGPU 路徑自動升級至 onnx-community/* 版本
-      const ONNX_COMMUNITY_MAP = {
-        'Xenova/whisper-tiny':   'onnx-community/whisper-tiny',
-        'Xenova/whisper-base':   'onnx-community/whisper-base',
-        'Xenova/whisper-small':  'onnx-community/whisper-small',
-        'Xenova/whisper-medium': 'onnx-community/whisper-small', // medium 無 onnx-community 版，降為 small
-      };
+      // v3 (Xenova) 使用 Xenova/* namespace，不支援 onnx-community
+      // onnx-community namespace 為 v4 專屬，待升級 v4 後可重新啟用
+      const resolvedModelId = payload.modelId;
 
       if (gpuAvailable && payload.preferGpu) {
         try {
           const adapter = await navigator.gpu.requestAdapter();
           if (!adapter) throw new Error('no adapter');
           device = 'webgpu';
-          // v4: WebGPU runtime 重寫為 C++，fp16 效能大幅提升
           dtype  = { encoder_model: 'fp16', decoder_model_merged: 'q4' };
           self.postMessage({ type: 'BACKEND', payload: 'webgpu' });
         } catch (_) {
@@ -1669,16 +1678,6 @@ self.addEventListener('message', async (e) => {
         device = 'wasm';
         dtype  = payload.dtype;
         self.postMessage({ type: 'BACKEND', payload: 'wasm' });
-      }
-
-      // WebGPU 路徑：優先使用 onnx-community namespace（v4 WebGPU contrib ops 更完整）
-      // WASM 路徑：維持 Xenova namespace（已驗證穩定）
-      const resolvedModelId = (device === 'webgpu' && ONNX_COMMUNITY_MAP[payload.modelId])
-        ? ONNX_COMMUNITY_MAP[payload.modelId]
-        : payload.modelId;
-
-      if (resolvedModelId !== payload.modelId) {
-        self.postMessage({ type: 'PROGRESS', payload: { status: 'info', message: `WebGPU 模型: ${resolvedModelId}` } });
       }
 
       pipe = await pipelineFn('automatic-speech-recognition', resolvedModelId, {
@@ -1771,6 +1770,8 @@ function createWorker() {
   }
   const blob = new Blob([WORKER_CODE], { type: 'application/javascript' });
   const blobUrl = URL.createObjectURL(blob);
+  // Classic worker：dynamic import() 在現代瀏覽器的 classic blob worker 中完全支援
+  // 注意：type:'module' 的 Blob URL Worker 在 Chrome/Safari 中不被允許
   inferenceWorker = new Worker(blobUrl);
   URL.revokeObjectURL(blobUrl);
   return inferenceWorker;
@@ -2029,6 +2030,184 @@ function getAudioDecodeWorker() {
   return _audioDecodeWorker;
 }
 
+// ══════════════════════════════════════════════════════════════════════
+//  說話者分割 Worker（pyannote/segmentation-3.0 via transformers.js）
+//  輸入：Float32Array @ 16kHz mono
+//  輸出：[{ id, start, end, confidence }] 說話者時間軸陣列
+//  處理大型音訊：以 10s 滑動視窗分段處理後合併
+// ══════════════════════════════════════════════════════════════════════
+const DIARIZATION_WORKER_CODE = `
+const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@3.5.2/dist/transformers.min.js';
+const MODEL_ID = 'onnx-community/pyannote-segmentation-3.0';
+const SAMPLE_RATE = 16000;
+const CHUNK_SAMPLES = 10 * SAMPLE_RATE;   // 10s per chunk
+const STEP_SAMPLES  = 8  * SAMPLE_RATE;   // 8s step (2s overlap)
+
+let processor = null;
+let model     = null;
+
+async function loadModels(progress_cb) {
+  if (processor && model) return;
+  const { AutoProcessor, AutoModelForAudioFrameClassification, env } = await import(TRANSFORMERS_URL);
+  env.allowLocalModels = false;
+  processor = await AutoProcessor.from_pretrained(MODEL_ID, { progress_callback: progress_cb });
+  model     = await AutoModelForAudioFrameClassification.from_pretrained(MODEL_ID, { progress_callback: progress_cb });
+}
+
+// 合併相鄰相同說話者的段落（gap < 0.3s 視為連續）
+function mergeSegments(segs) {
+  if (!segs.length) return segs;
+  const out = [{ ...segs[0] }];
+  for (let i = 1; i < segs.length; i++) {
+    const prev = out[out.length - 1];
+    const cur  = segs[i];
+    if (cur.id === prev.id && cur.start - prev.end < 0.3) {
+      prev.end = cur.end;
+      prev.confidence = (prev.confidence + cur.confidence) / 2;
+    } else {
+      out.push({ ...cur });
+    }
+  }
+  return out;
+}
+
+self.addEventListener('message', async (e) => {
+  const { type, payload } = e.data;
+
+  if (type === 'LOAD') {
+    try {
+      await loadModels(x => self.postMessage({ type: 'PROGRESS', payload: x }));
+      self.postMessage({ type: 'LOADED' });
+    } catch(err) {
+      self.postMessage({ type: 'ERROR', payload: err.message });
+    }
+  }
+
+  if (type === 'DIARIZE') {
+    try {
+      const audio   = payload;                       // Float32Array @ 16kHz
+      const total   = audio.length;
+      const allSegs = [];
+
+      // 滑動視窗分段處理
+      let chunkIdx = 0;
+      for (let start = 0; start < total; start += STEP_SAMPLES) {
+        const end     = Math.min(start + CHUNK_SAMPLES, total);
+        const chunk   = audio.slice(start, end);
+        const startSec = start / SAMPLE_RATE;
+
+        const inputs        = await processor(chunk);
+        const { logits }    = await model(inputs);
+        const chunkResult   = processor.post_process_speaker_diarization(logits, chunk.length);
+
+        // 調整時間戳：加上本段的起始秒數
+        if (chunkResult && chunkResult[0]) {
+          for (const seg of chunkResult[0]) {
+            allSegs.push({
+              id:         seg.id,
+              start:      parseFloat((seg.start + startSec).toFixed(3)),
+              end:        parseFloat((seg.end   + startSec).toFixed(3)),
+              confidence: parseFloat((seg.confidence ?? 0).toFixed(3)),
+            });
+          }
+        }
+
+        chunkIdx++;
+        self.postMessage({ type: 'CHUNK_DONE', payload: {
+          processed: end / SAMPLE_RATE,
+          total:     total / SAMPLE_RATE,
+          pct:       Math.round(end / total * 100),
+        }});
+
+        if (end >= total) break;
+      }
+
+      // 依時間排序 → 合併相鄰同說話者段落
+      allSegs.sort((a, b) => a.start - b.start || a.id - b.id);
+      const merged = mergeSegments(allSegs);
+      self.postMessage({ type: 'DIARIZE_DONE', payload: merged });
+
+    } catch(err) {
+      self.postMessage({ type: 'ERROR', payload: err.message });
+    }
+  }
+});
+`;
+
+let _diarizationWorker = null;
+function getDiarizationWorker() {
+  if (_diarizationWorker) return _diarizationWorker;
+  const blob    = new Blob([DIARIZATION_WORKER_CODE], { type: 'application/javascript' });
+  const blobUrl = URL.createObjectURL(blob);
+  // Classic worker：dynamic import() 在現代瀏覽器的 classic blob worker 中完全支援
+  _diarizationWorker = new Worker(blobUrl);
+  URL.revokeObjectURL(blobUrl);
+  return _diarizationWorker;
+}
+
+/** 執行說話者分割。回傳 segments 陣列，失敗回 null */
+async function runDiarization(mono, onProgress) {
+  return new Promise((resolve) => {
+    let worker;
+    try { worker = getDiarizationWorker(); } catch { return resolve(null); }
+    const timer = setTimeout(() => { worker.removeEventListener('message', handler); resolve(null); }, 300_000);
+    function handler(ev) {
+      const { type, payload } = ev.data;
+      if (type === 'DIARIZE_DONE') {
+        clearTimeout(timer);
+        worker.removeEventListener('message', handler);
+        resolve(payload);
+      } else if (type === 'ERROR') {
+        clearTimeout(timer);
+        worker.removeEventListener('message', handler);
+        resolve(null);
+      } else if (type === 'CHUNK_DONE' && onProgress) {
+        onProgress(payload);
+      }
+    }
+    worker.addEventListener('message', handler);
+    worker.postMessage({ type: 'DIARIZE', payload: mono }, [mono.buffer]);
+  });
+}
+
+/** 將說話者分割結果套用到字幕 chunks
+ *  每個 chunk 按其中心時間點找最接近的說話者段落，加入 _speaker 標記
+ */
+function applyDiarizationToChunks(chunks, segments) {
+  if (!segments || !segments.length) return chunks;
+  return chunks.map(c => {
+    const [ts, te] = c.timestamp ?? [null, null];
+    if (ts == null) return c;
+    const mid = (ts + (te ?? ts)) / 2;
+    // 找包含此時間點的段落
+    let best = segments.find(s => mid >= s.start && mid <= s.end);
+    // fallback：找最近的段落
+    if (!best) {
+      best = segments.reduce((prev, cur) =>
+        Math.abs((cur.start + cur.end)/2 - mid) < Math.abs((prev.start + prev.end)/2 - mid) ? cur : prev
+      );
+    }
+    const label = best ? `說話者 ${String.fromCharCode(65 + (best.id % 26))}` : null;
+    return label ? { ...c, _speaker: label } : c;
+  });
+}
+
+/** 建立帶說話者標籤的 SRT（在說話者變換時插入標題行）*/
+function chunksToSrtWithSpeakers(chunks) {
+  let idx = 1, out = '';
+  let prevSpeaker = null;
+  for (const c of chunks) {
+    const [ts, te] = c.timestamp ?? [0, 0];
+    const t1 = secToSrtTime(ts ?? 0);
+    const t2 = secToSrtTime(te ?? (ts ?? 0) + 2);
+    const speaker = c._speaker ?? null;
+    const prefix  = (speaker && speaker !== prevSpeaker) ? `[${speaker}] ` : (speaker ? '' : '');
+    out += `${idx++}\n${t1} --> ${t2}\n${speaker ? '[' + speaker + '] ' : ''}${c.text.trim()}\n\n`;
+    prevSpeaker = speaker;
+  }
+  return out.trimEnd();
+}
+
 // 嘗試 WebCodecs Worker 解碼（MP4/M4A），失敗回 null → 主執行緒 fallback
 async function tryDecodeViaWorker(arrayBuffer) {
   return new Promise((resolve) => {
@@ -2100,13 +2279,9 @@ const _dtypeCache = new Map();   // modelId → 已解析的 dtype string
 let   _modelRegistryRef = null;  // 懶載入 ModelRegistry
 
 async function _loadModelRegistry() {
-  if (_modelRegistryRef) return _modelRegistryRef;
-  try {
-    const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.1.0/dist/transformers.min.js';
-    const mod = await import(TRANSFORMERS_URL);
-    _modelRegistryRef = mod.ModelRegistry ?? null;
-  } catch { _modelRegistryRef = null; }
-  return _modelRegistryRef;
+  // ModelRegistry 為 transformers.js v4 專屬 API
+  // 目前使用 v3 (Xenova)，直接回 null 走靜態 fallback
+  return null;
 }
 
 function _dtypeFallback(modelId) {
@@ -2465,6 +2640,60 @@ const outFilenameEl = document.getElementById('outFilename');
 const batchQueueEl  = document.getElementById('batchQueue');
 const batchListEl   = document.getElementById('batchList');
 const batchCountEl  = document.getElementById('batchCount');
+// ══════════════════════════════════════════════════════════════════════
+//  批次 ZIP 打包下載（JSZip 懶載入）
+// ══════════════════════════════════════════════════════════════════════
+let _jszip = null;
+async function loadJSZip() {
+  if (_jszip) return _jszip;
+  await new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = JSZIP_CDN;
+    s.onload  = resolve;
+    s.onerror = () => reject(new Error('JSZip 載入失敗'));
+    document.head.appendChild(s);
+  });
+  _jszip = window.JSZip;
+  return _jszip;
+}
+
+async function downloadAllAsZip() {
+  const btn = document.getElementById('btnDownloadZip');
+  const readyItems = batchQueue.filter(i => i.status === 'done' && i.dlUrl && i.dlFilename);
+  if (readyItems.length === 0) { log('沒有可打包的完成項目', 'warn'); return; }
+
+  btn.disabled = true;
+  btn.textContent = '⏳ 打包中...';
+
+  try {
+    const JSZip = await loadJSZip();
+    const zip   = new JSZip();
+
+    // 依序讀取每個 blob URL 並加入 ZIP
+    for (const item of readyItems) {
+      const resp   = await fetch(item.dlUrl);
+      const buffer = await resp.arrayBuffer();
+      zip.file(item.dlFilename, buffer);
+    }
+
+    const blob     = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    const zipUrl   = URL.createObjectURL(blob);
+    const a        = document.createElement('a');
+    a.href         = zipUrl;
+    a.download     = `subtitles_${new Date().toISOString().slice(0,10)}.zip`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(zipUrl), 60_000);
+
+    btn.textContent = `✓ 已下載 ${readyItems.length} 個檔案`;
+    log(`✓ ZIP 打包完成：${readyItems.length} 個字幕檔`, 'ok');
+  } catch(err) {
+    log(`ZIP 打包失敗：${err.message}`, 'err');
+    btn.textContent = '⬇ 全部打包下載 ZIP';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 const batchSummaryEl= document.getElementById('batchSummary');
 const batchSummaryStats = document.getElementById('batchSummaryStats');
 
@@ -2777,10 +3006,16 @@ async function decodeAudio(file) {
     log('✓ 音訊正規化完成（Peak Normalization）', 'ok');
   }
 
+  // 保留 mono 快照供後續 Diarization 使用（大檔案路徑會清空 mono）
+  let _monoSnapshot = null;
+  const _diarWillRun = document.getElementById('tog_diarization')?.checked;
+
   if (file.size > LARGE_FILE_THRESHOLD) {
     const cacheKey = `audio:${file.name}:${file.size}:${file.lastModified}`;
     log(`大檔案偵測（${formatSize(file.size)}）→ 嘗試分片存入 IndexedDB`, 'warn');
     try {
+      // 若 Diarization 啟用，先保留 mono 副本（最多 10 分鐘音訊 @ 16kHz）
+      if (_diarWillRun && mono) _monoSnapshot = mono.slice(0, Math.min(mono.length, 9_600_000));
       const { shardCount, totalSamples } = await storeAudioInIDB(cacheKey, mono);
       mono = null; 
       log(`✓ 已分 ${shardCount} 片儲存至 IndexedDB`, 'ok');
@@ -2859,6 +3094,7 @@ function applyPeakNormalization(samples) {
 
 const VAD_WEB_CDN   = 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.30/dist/';
 const ONNX_WASM_CDN = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/';
+const JSZIP_CDN     = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
 
 let _vadInstance = null;
 let _vadLoading  = false;
@@ -3408,13 +3644,55 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
 
     setProgress(96, '後處理中...', false);
     resetEta();
+
+    // ── 說話者分割（Diarization）──────────────────────────────────
+    let diarSegments = null;
+    const diarEnabled = document.getElementById('tog_diarization')?.checked;
+    if (diarEnabled && mono) {
+      try {
+        log('說話者分割中（pyannote-segmentation-3.0）...', 'info');
+        setProgress(96, '說話者分割中...', false);
+
+        // 確保模型已載入（首次需下載 ~18MB）
+        await new Promise((resolve, reject) => {
+          const w = getDiarizationWorker();
+          const timer = setTimeout(() => reject(new Error('模型載入逾時')), 120_000);
+          function h(e) {
+            if (e.data.type === 'LOADED') { clearTimeout(timer); w.removeEventListener('message', h); resolve(); }
+            else if (e.data.type === 'ERROR') { clearTimeout(timer); w.removeEventListener('message', h); reject(new Error(e.data.payload)); }
+            else if (e.data.type === 'PROGRESS') { log(`下載 pyannote: ${e.data.payload?.name ?? ''}`, 'info'); }
+          }
+          w.addEventListener('message', h);
+          w.postMessage({ type: 'LOAD' });
+        });
+
+        // 使用 mono 快照（小檔）或保留的快照（大檔已被 IDB 清空）
+        const monoForDiar = (_monoSnapshot instanceof Float32Array)
+          ? _monoSnapshot
+          : (mono instanceof Float32Array ? mono.slice() : null);
+        if (monoForDiar) {
+          diarSegments = await runDiarization(monoForDiar, ({ pct }) => {
+            setProgress(96, `說話者分割 ${pct}%...`, false);
+          });
+          if (diarSegments) {
+            const speakerCount = new Set(diarSegments.map(s => s.id)).size;
+            log(`✓ 偵測到 ${speakerCount} 位說話者，${diarSegments.length} 段`, 'ok');
+          }
+        }
+      } catch (diarErr) {
+        log(`⚠ 說話者分割失敗：${diarErr.message}，跳過`, 'warn');
+      }
+    }
+
     const rawChunks = allChunks.filter((c, idx, arr) => idx === 0 || c.text.trim() !== arr[idx - 1].text.trim());
-    const chunks = applyPostProcessing(rawChunks);
+    // 套用說話者標籤（在後處理前，以保留 _speaker 屬性）
+    const labelledChunks = diarSegments ? applyDiarizationToChunks(rawChunks, diarSegments) : rawChunks;
+    const chunks = applyPostProcessing(labelledChunks);
     const postCount = Object.values(getPostConfig()).filter(v => v === true).length;
     if (postCount > 0) log(`✓ 後處理套用（${postCount} 項）`, 'ok');
     const fmt2 = document.getElementById('outFormat').value;
 
-    if (fmt2 === 'srt')       outputContent = chunks.length === 0 ? `1\n00:00:00,000 --> 00:00:05,000\n（無辨識結果）` : chunksToSrt(chunks);
+    if (fmt2 === 'srt')       outputContent = chunks.length === 0 ? `1\n00:00:00,000 --> 00:00:05,000\n（無辨識結果）` : (diarSegments ? chunksToSrtWithSpeakers(chunks) : chunksToSrt(chunks));
     else if (fmt2 === 'vtt')  outputContent = chunks.length === 0 ? `WEBVTT\n\n00:00:00.000 --> 00:00:05.000\n（無辨識結果）\n` : chunksToVtt(chunks);
     else if (fmt2 === 'txt')  outputContent = chunks.length === 0 ? '（無辨識結果）' : chunksToTxt(chunks);
     else if (fmt2 === 'md')   outputContent = chunks.length === 0 ? `# 字幕文字稿\n\n（無辨識結果）` : chunksToMarkdown(chunks);
@@ -3617,6 +3895,7 @@ startBtn.addEventListener('click', async () => {
   }
 
   if (pendingItems.length > 1) {
+    const zipableCount = batchQueue.filter(i => i.status === 'done' && i.dlUrl).length;
     batchSummaryStats.innerHTML = `
       ✅ 完成：${doneCount} 個　　
       ❌ 失敗：${errorCount} 個　　
@@ -3624,6 +3903,15 @@ startBtn.addEventListener('click', async () => {
       ${outFolderHandle ? `📁 已自動儲存至：${escapeHtml(outFolderHandle.name)}/` : '⬇ 請點擊各檔案的下載按鈕'}
     `;
     batchSummaryEl.classList.add('show');
+
+    // 顯示 ZIP 打包按鈕（無資料夾時才需要）
+    const zipBtn = document.getElementById('btnDownloadZip');
+    if (!outFolderHandle && zipableCount > 1) {
+      zipBtn.style.display = 'block';
+      zipBtn.textContent   = `⬇ 全部打包下載 ZIP（${zipableCount} 個字幕）`;
+    } else {
+      zipBtn.style.display = 'none';
+    }
   }
 
   isRunning = false;
@@ -3637,6 +3925,9 @@ startBtn.addEventListener('click', async () => {
 });
 
 updateModelFolderStatus();
+
+// ZIP 批次下載按鈕
+document.getElementById('btnDownloadZip')?.addEventListener('click', downloadAllAsZip);
 
 // ═══════════════════════════════════════════════════════════════════
 //  智慧後處理模組 (Smart Post-processing Module)
@@ -4216,7 +4507,87 @@ function applyFuzzyMedicalDict(subs, dict, threshold = 0.75) {
   });
 }
 
-/** 主函式：依 UI 設定套用所有後處理 */
+/** 幻覺偵測警示（基於 Frieske & Shi 2024 方法論）
+ *  偵測四種 Whisper 常見幻覺症狀：
+ *  1. 重複 n-gram（連續相同詞組）
+ *  2. 超長靜音後突發字幕（gap > threshold）
+ *  3. 不合理高速字幕（字/秒 > threshold）
+ *  4. 孤立非語言音（僅含括號標記）
+ *  回傳帶 _hallucination 旗標的 subs 陣列
+ */
+function detectHallucinations(subs, gapThreshold = 3.0, speedThreshold = 12) {
+  if (!subs || subs.length === 0) return subs;
+
+  // ── 工具：提取 n-gram ──────────────────────────────────────
+  function getNgrams(text, n) {
+    const words = text.trim().split(/\s+/);
+    if (words.length < n) return new Set();
+    const grams = new Set();
+    for (let i = 0; i <= words.length - n; i++) {
+      grams.add(words.slice(i, i + n).join(' '));
+    }
+    return grams;
+  }
+
+  function hasRepeatNgram(text, minN = 2) {
+    const clean = text.trim();
+    for (let n = minN; n <= 4; n++) {
+      const grams = [...getNgrams(clean, n)];
+      for (const g of grams) {
+        // 若同一 gram 出現 2 次以上則視為重複
+        const escaped = g.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp(escaped, 'g');
+        if ((clean.match(re) || []).length >= 2) return true;
+      }
+    }
+    return false;
+  }
+
+  const flagged = subs.map((s, i) => {
+    const reasons = [];
+    const text    = s.text ?? '';
+    const dur     = (s.end ?? 0) - (s.start ?? 0);
+    const chars   = text.replace(/\s/g, '').length;
+
+    // 症狀 1：重複 n-gram（≥2 詞）
+    if (chars > 4 && hasRepeatNgram(text, 2)) {
+      reasons.push('重複詞組');
+    }
+
+    // 症狀 2：前一字幕結束到本字幕開始 gap 超過閾值
+    if (i > 0) {
+      const prevEnd  = subs[i - 1].end ?? 0;
+      const gap      = (s.start ?? 0) - prevEnd;
+      if (gap > gapThreshold && chars > 2) {
+        reasons.push(`長靜音後突發（${gap.toFixed(1)}s）`);
+      }
+    }
+
+    // 症狀 3：字速異常（字/秒 > 閾值）
+    if (dur > 0 && chars / dur > speedThreshold) {
+      reasons.push(`速度異常（${(chars / dur).toFixed(1)} 字/s）`);
+    }
+
+    // 症狀 4：孤立非語言音（僅有括號內容）
+    if (/^[\[(（「【].+[\])）」】]$/.test(text.trim())) {
+      reasons.push('孤立非語言音');
+    }
+
+    return reasons.length > 0
+      ? { ...s, _hallucination: true, _halluReasons: reasons }
+      : s;
+  });
+
+  return flagged;
+}
+
+/** 在字幕文字前加上 ⚠ 警示標記 */
+function applyHallucinationWarning(subs) {
+  return subs.map(s => s._hallucination
+    ? { ...s, text: `⚠ ${s.text}` }
+    : s
+  );
+}
 function applyPostProcessing(chunks) {
   if (!chunks || chunks.length === 0) return chunks;
 
@@ -4243,6 +4614,16 @@ function applyPostProcessing(chunks) {
     subs = applyFuzzyMedicalDict(subs, medicalDict, cfg.fuzzyThreshold);
   }
 
+  // 幻覺偵測：在所有後處理完成後執行（保留最終文字狀態）
+  if (cfg.hallucination) {
+    subs = detectHallucinations(subs, cfg.hallucGap, cfg.hallucSpeed);
+    subs = applyHallucinationWarning(subs);
+    const warningCount = subs.filter(s => s._hallucination).length;
+    if (warningCount > 0) {
+      log(`⚠ 幻覺偵測：${warningCount} 段字幕標記為可疑，請人工複核`, 'warn');
+    }
+  }
+
   return subsToChunks(subs);
 }
 
@@ -4261,6 +4642,10 @@ function getPostConfig() {
     medical:        document.getElementById('tog_medical').checked,
     fuzzy:          document.getElementById('tog_fuzzy')?.checked ?? false,
     fuzzyThreshold: parseFloat(document.getElementById('p_fuzzy_threshold')?.value) || 0.65,
+    hallucination:  document.getElementById('tog_hallucination')?.checked ?? false,
+    hallucGap:      parseFloat(document.getElementById('p_halluc_gap')?.value) || 3.0,
+    hallucSpeed:    parseFloat(document.getElementById('p_halluc_speed')?.value) || 12,
+    diarization:    document.getElementById('tog_diarization')?.checked ?? false,
   };
 }
 
@@ -4278,7 +4663,7 @@ document.getElementById('audioEnhanceHeader').addEventListener('click', () => {
 
 // Toggle → 顯示/隱藏參數區，並更新 badge
 function updatePostBadge() {
-  const toggles = ['tog_merge','tog_split','tog_overlap','tog_mindur','tog_period','tog_case','tog_medical','tog_fuzzy'];
+  const toggles = ['tog_merge','tog_split','tog_overlap','tog_mindur','tog_period','tog_case','tog_medical','tog_fuzzy','tog_hallucination','tog_diarization'];
   const count = toggles.filter(id => document.getElementById(id)?.checked).length;
   document.getElementById('postActiveBadge').textContent = `${count} 項啟用`;
   document.getElementById('postActiveBadge').style.background =
@@ -4302,15 +4687,16 @@ function updateAudioEnhanceBadge() {
 
 // 參數折疊對應
 const toggleParamMap = {
-  tog_merge:   'params_merge',
-  tog_split:   'params_split',
-  tog_mindur:  'params_mindur',
-  tog_medical: 'dictEditor',
-  tog_fuzzy:   'params_fuzzy',
-  tog_vad:     'params_vad',
+  tog_merge:        'params_merge',
+  tog_split:        'params_split',
+  tog_mindur:       'params_mindur',
+  tog_medical:      'dictEditor',
+  tog_fuzzy:        'params_fuzzy',
+  tog_vad:          'params_vad',
+  tog_hallucination:'params_hallucination',
 };
 
-['tog_merge','tog_split','tog_overlap','tog_mindur','tog_period','tog_case','tog_medical','tog_fuzzy'].forEach(id => {
+['tog_merge','tog_split','tog_overlap','tog_mindur','tog_period','tog_case','tog_medical','tog_fuzzy','tog_hallucination','tog_diarization'].forEach(id => {
   document.getElementById(id)?.addEventListener('change', () => {
     if (toggleParamMap[id]) {
       document.getElementById(toggleParamMap[id])?.classList.toggle('show',
