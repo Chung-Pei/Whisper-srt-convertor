@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whisper 離線字幕產生器 v12</title>
+<title>Whisper 離線字幕產生器 v13</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@400;600;800&display=swap');
   
@@ -24,6 +24,37 @@
     --radius: 8px;
     --radius-lg: 14px;
   }
+
+  [data-theme="light"] {
+    --bg: #f4f4f0;
+    --panel: #ffffff;
+    --panel2: #eeeeea;
+    --border: rgba(0,0,0,0.08);
+    --border2: rgba(0,0,0,0.14);
+    --text: #1a1a18;
+    --muted: #888880;
+    --accent: #008f62;
+    --accent2: #006f4c;
+    --warn: #b58800;
+    --err: #cc2222;
+  }
+
+  .theme-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--panel);
+    border: 1px solid var(--border2);
+    border-radius: 99px;
+    padding: 5px 12px;
+    font-size: 0.7rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.05em;
+  }
+  .theme-toggle-btn:hover { border-color: var(--accent); color: var(--accent); }
 
   body {
     background: var(--bg);
@@ -225,7 +256,7 @@
   .drop-zone {
     border: 1.5px dashed var(--border2);
     border-radius: var(--radius-lg);
-    padding: 3rem 2rem;
+    padding: 1.4rem 1.5rem;
     text-align: center;
     cursor: pointer;
     transition: all 0.2s;
@@ -285,7 +316,7 @@
 
   input[type="text"] { cursor: text; }
   select:focus, input[type="text"]:focus { border-color: var(--accent); }
-  select option { background: #111113; }
+  select option { background: var(--panel); }
 
   .output-panel {
     background: var(--panel);
@@ -842,6 +873,7 @@
   }
   .post-params.show { display: grid; }
   .post-params.cols1 { grid-template-columns: 1fr; }
+  .post-params.cols2 { grid-template-columns: 1fr 1fr; }
 
   .param-group label {
     display: block;
@@ -1119,8 +1151,12 @@
   <header>
     <div class="badge-offline">完全離線 · 無資料外傳</div>
     <h1>Whisper <span>離線</span><br>字幕產生器</h1>
-    <p class="subtitle">// v12 · Transformers.js 3.5.2 · Silero VAD · 逐字時間戳 · 注音聲學模糊匹配 · 斷點續傳 · 動態記憶體調適</p>
+    <p class="subtitle">// v13 · Transformers.js 3.5.2 · Silero VAD · 逐字時間戳 · 注音聲學模糊匹配 · 斷點續傳 · 動態記憶體調適</p>
   </header>
+
+  <div style="display:flex; justify-content:flex-end; margin-bottom:1rem;">
+    <button class="theme-toggle-btn" id="themeToggleBtn">🌙 深色模式</button>
+  </div>
 
   <div class="section-title">語音模型</div>
   <div class="model-strip">
@@ -1372,6 +1408,10 @@
         </div>
         <label class="toggle-switch"><input type="checkbox" id="tog_diarization"><span class="toggle-slider"></span></label>
       </div>
+
+      <div class="post-toggle-row" style="border-top:1px solid rgba(255,255,255,0.04);margin-top:0.2rem;padding-top:0.45rem;">
+        <div class="post-toggle-info">
+          <div class="post-toggle-name">🔍 幻覺字幕偵測</div>
           <div class="post-toggle-desc">偵測 Whisper 常見幻覺症狀（重複詞組、長靜音後突發字幕、速度異常段落），以 ⚠ 標記可疑字幕</div>
         </div>
         <label class="toggle-switch"><input type="checkbox" id="tog_hallucination"><span class="toggle-slider"></span></label>
@@ -1658,10 +1698,6 @@ self.addEventListener('message', async (e) => {
       const gpuAvailable = typeof navigator !== 'undefined' && !!navigator.gpu;
       let device, dtype;
 
-      // v3 (Xenova) 使用 Xenova/* namespace，不支援 onnx-community
-      // onnx-community namespace 為 v4 專屬，待升級 v4 後可重新啟用
-      const resolvedModelId = payload.modelId;
-
       if (gpuAvailable && payload.preferGpu) {
         try {
           const adapter = await navigator.gpu.requestAdapter();
@@ -1680,7 +1716,7 @@ self.addEventListener('message', async (e) => {
         self.postMessage({ type: 'BACKEND', payload: 'wasm' });
       }
 
-      pipe = await pipelineFn('automatic-speech-recognition', resolvedModelId, {
+      pipe = await pipelineFn('automatic-speech-recognition', payload.modelId, {
         dtype,
         device,
         progress_callback: (x) => self.postMessage({ type: 'PROGRESS', payload: x }),
@@ -2195,15 +2231,12 @@ function applyDiarizationToChunks(chunks, segments) {
 /** 建立帶說話者標籤的 SRT（在說話者變換時插入標題行）*/
 function chunksToSrtWithSpeakers(chunks) {
   let idx = 1, out = '';
-  let prevSpeaker = null;
   for (const c of chunks) {
     const [ts, te] = c.timestamp ?? [0, 0];
-    const t1 = secToSrtTime(ts ?? 0);
-    const t2 = secToSrtTime(te ?? (ts ?? 0) + 2);
+    const t1 = fmtTime(ts ?? 0);
+    const t2 = fmtTime(te ?? (ts ?? 0) + 2);
     const speaker = c._speaker ?? null;
-    const prefix  = (speaker && speaker !== prevSpeaker) ? `[${speaker}] ` : (speaker ? '' : '');
     out += `${idx++}\n${t1} --> ${t2}\n${speaker ? '[' + speaker + '] ' : ''}${c.text.trim()}\n\n`;
-    prevSpeaker = speaker;
   }
   return out.trimEnd();
 }
@@ -2273,24 +2306,14 @@ function getAvailableMemoryMB() {
 
 function isWebGPUSupported() { return typeof navigator !== 'undefined' && !!navigator.gpu; }
 
-// ── chooseDtype v2：優先使用 ModelRegistry.get_available_dtypes()（transformers.js v4）
-//   若 ModelRegistry 無法取得，降回靜態 sizeMap 邏輯（v3 相容）
+// ── chooseDtype：依可用記憶體選擇最佳量化格式（v3 相容靜態邏輯）
 const _dtypeCache = new Map();   // modelId → 已解析的 dtype string
-let   _modelRegistryRef = null;  // 懶載入 ModelRegistry
-
-async function _loadModelRegistry() {
-  // ModelRegistry 為 transformers.js v4 專屬 API
-  // 目前使用 v3 (Xenova)，直接回 null 走靜態 fallback
-  return null;
-}
 
 function _dtypeFallback(modelId) {
   const available = getAvailableMemoryMB();
   const sizeMap = {
-    // Xenova namespace
     'Xenova/whisper-tiny': 75, 'Xenova/whisper-base': 145, 'Xenova/whisper-small': 460,
     'Xenova/whisper-medium': 1500, 'onnx-community/whisper-large-v3-turbo': 1600,
-    // onnx-community namespace（v4 WebGPU 路徑）
     'onnx-community/whisper-tiny': 75, 'onnx-community/whisper-base': 145,
     'onnx-community/whisper-small': 460,
   };
@@ -2302,33 +2325,8 @@ function _dtypeFallback(modelId) {
 
 async function chooseDtype(modelId) {
   if (_dtypeCache.has(modelId)) return _dtypeCache.get(modelId);
-
-  let dtype = null;
-
-  try {
-    const registry = await Promise.race([
-      _loadModelRegistry(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
-    ]);
-    if (registry?.get_available_dtypes) {
-      const available  = getAvailableMemoryMB();
-      const dtypes     = await registry.get_available_dtypes(modelId);
-      // 依記憶體壓力選取最佳格式：記憶體充足優先 fp16/q8；不足則選 q4
-      const preferred  = available > 3000
-        ? ['fp16', 'q8', 'q4', 'fp32']   // 記憶體充足：fp16 優先（WebGPU 最快）
-        : available > 1200
-        ? ['q8', 'q4', 'fp16', 'fp32']   // 中等記憶體
-        : ['q4', 'q8', 'fp16', 'fp32'];  // 記憶體吃緊
-      dtype = preferred.find(d => dtypes.includes(d)) ?? dtypes[0] ?? 'fp32';
-      log(`ModelRegistry dtype 查詢完成：${modelId} → 可用 [${dtypes.join(', ')}]，選取 ${dtype}`, 'info');
-    }
-  } catch { /* 靜默 fallback */ }
-
-  if (!dtype) {
-    dtype = _dtypeFallback(modelId);
-    log(`dtype fallback（靜態）：${modelId} → ${dtype}`, 'info');
-  }
-
+  const dtype = _dtypeFallback(modelId);
+  log(`dtype：${modelId} → ${dtype}`, 'info');
   _dtypeCache.set(modelId, dtype);
   return dtype;
 }
@@ -3007,26 +3005,25 @@ async function decodeAudio(file) {
   }
 
   // 保留 mono 快照供後續 Diarization 使用（大檔案路徑會清空 mono）
-  let _monoSnapshot = null;
-  const _diarWillRun = document.getElementById('tog_diarization')?.checked;
+  let monoSnapshot = null;
+  const diarWillRun = document.getElementById('tog_diarization')?.checked;
 
   if (file.size > LARGE_FILE_THRESHOLD) {
     const cacheKey = `audio:${file.name}:${file.size}:${file.lastModified}`;
     log(`大檔案偵測（${formatSize(file.size)}）→ 嘗試分片存入 IndexedDB`, 'warn');
     try {
       // 若 Diarization 啟用，先保留 mono 副本（最多 10 分鐘音訊 @ 16kHz）
-      if (_diarWillRun && mono) _monoSnapshot = mono.slice(0, Math.min(mono.length, 9_600_000));
+      if (diarWillRun && mono) monoSnapshot = mono.slice(0, Math.min(mono.length, 9_600_000));
       const { shardCount, totalSamples } = await storeAudioInIDB(cacheKey, mono);
       mono = null; 
       log(`✓ 已分 ${shardCount} 片儲存至 IndexedDB`, 'ok');
       activeIdbCacheKey = cacheKey; 
-      return { type: 'idb', cacheKey, totalSamples, shardCount };
+      return { audio: { type: 'idb', cacheKey, totalSamples, shardCount }, monoSnapshot };
     } catch (e) {
       if (e.message === 'CANCELLED') throw e;
       log('⚠ IndexedDB 儲存失敗，降級使用記憶體模式處理大檔案', 'warn');
       if (!mono) {
         log('⚠ 記憶體已釋放，重新解碼音訊...', 'warn');
-        // 重新走主執行緒 fallback 路徑（此時 mono 已被清空）
         const arrayBuf2 = await file.arrayBuffer();
         const audioCtx2 = new (window.AudioContext || window.webkitAudioContext)();
         let decoded2;
@@ -3064,11 +3061,11 @@ async function decodeAudio(file) {
           mono = resampled2.getChannelData(0).slice();
         }
       }
-      return mono;
+      return { audio: mono, monoSnapshot };
     }
   }
 
-  return mono;
+  return { audio: mono, monoSnapshot };
 }
 
 // ── Peak Normalization ─────────────────────────────────────────────
@@ -3422,7 +3419,7 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
     if (isCancelled) throw new Error('CANCELLED');
 
     setProgress(57, '解碼音訊...', true);
-    const audio = await decodeAudio(file);
+    const { audio, monoSnapshot } = await decodeAudio(file);
     const totalSec = (audio instanceof Float32Array ? audio.length : audio.totalSamples) / 16000;
     log(`音訊解碼完成，長度：${totalSec.toFixed(1)}s`, 'ok');
 
@@ -3648,7 +3645,7 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
     // ── 說話者分割（Diarization）──────────────────────────────────
     let diarSegments = null;
     const diarEnabled = document.getElementById('tog_diarization')?.checked;
-    if (diarEnabled && mono) {
+    if (diarEnabled && (monoSnapshot || audio instanceof Float32Array)) {
       try {
         log('說話者分割中（pyannote-segmentation-3.0）...', 'info');
         setProgress(96, '說話者分割中...', false);
@@ -3666,10 +3663,10 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
           w.postMessage({ type: 'LOAD' });
         });
 
-        // 使用 mono 快照（小檔）或保留的快照（大檔已被 IDB 清空）
-        const monoForDiar = (_monoSnapshot instanceof Float32Array)
-          ? _monoSnapshot
-          : (mono instanceof Float32Array ? mono.slice() : null);
+        // 大檔案使用 monoSnapshot（IDB 路徑已清空 audio），小檔案直接用 audio
+        const monoForDiar = (monoSnapshot instanceof Float32Array)
+          ? monoSnapshot
+          : (audio instanceof Float32Array ? audio.slice() : null);
         if (monoForDiar) {
           diarSegments = await runDiarization(monoForDiar, ({ pct }) => {
             setProgress(96, `說話者分割 ${pct}%...`, false);
@@ -4492,7 +4489,6 @@ function applyFuzzyMedicalDict(subs, dict, threshold = 0.75) {
           if (sim >= threshold) {
             const replacement = `${zh} (${en})`;
             text = text.slice(0, start) + replacement + text.slice(start + winLen);
-            console.debug(`[PhoneticFuzzy] "${window}" → "${replacement}" (sim=${sim.toFixed(2)}, bopo_a=${toBopomofo(window)}, bopo_b=${toBopomofo(term)})`);
             start += replacement.length;
             replaced = true;
             break;
@@ -4905,6 +4901,32 @@ document.getElementById('dictImportFile').addEventListener('change', async (e) =
 
 // 初始化詞典表格
 renderDictTable();
+
+// ── 色調模式切換 ──────────────────────────────────────────────────
+(function() {
+  const btn = document.getElementById('themeToggleBtn');
+  if (!btn) return;
+  // 讀取 localStorage 儲存的偏好
+  const saved = localStorage.getItem('whisper-theme');
+  if (saved === 'light') {
+    document.documentElement.setAttribute('data-theme', 'light');
+    btn.textContent = '☀ 淺色模式';
+  } else {
+    btn.textContent = '🌙 深色模式';
+  }
+  btn.addEventListener('click', () => {
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    if (isLight) {
+      document.documentElement.removeAttribute('data-theme');
+      btn.textContent = '🌙 深色模式';
+      localStorage.setItem('whisper-theme', 'dark');
+    } else {
+      document.documentElement.setAttribute('data-theme', 'light');
+      btn.textContent = '☀ 淺色模式';
+      localStorage.setItem('whisper-theme', 'light');
+    }
+  });
+})();
 </script>
 </body>
 </html>
