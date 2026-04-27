@@ -1309,6 +1309,19 @@
     </div>
   </div>
 
+  <div class="opt-group" style="margin-top:0.75rem;">
+    <label style="display:flex;align-items:center;gap:0.5rem;">
+      初始提示詞 <span class="fuzzy-badge">initial prompt</span>
+      <span style="font-size:0.7rem;color:var(--muted);font-family:'IBM Plex Mono',monospace;font-weight:400;">選填</span>
+    </label>
+    <textarea id="initialPrompt" rows="2"
+      placeholder="輸入背景知識提升辨識準確率，例如：本音訊討論心臟外科手術、冠狀動脈繞道移植術、左心室射出分率。&#10;留空時不使用提示詞。"
+      style="width:100%;resize:vertical;min-height:3rem;max-height:8rem;padding:0.55rem 0.75rem;background:var(--panel2);border:1px solid var(--border2);border-radius:var(--radius);color:var(--text);font-size:0.78rem;font-family:'IBM Plex Mono',monospace;line-height:1.5;"></textarea>
+    <div style="font-size:0.68rem;color:var(--muted);font-family:'IBM Plex Mono',monospace;margin-top:0.3rem;">
+      提示詞會讓 Whisper 偏向辨識相關詞彙，適合會議、醫學、法律等專業場景。
+    </div>
+  </div>
+
   <div class="section-title">輸出設定</div>
   <div class="output-panel">
     <div class="output-row-2" style="margin-bottom:0.75rem;">
@@ -1321,6 +1334,7 @@
         <select id="outFormat">
           <option value="srt">SRT 字幕 (.srt)</option>
           <option value="vtt">WebVTT (.vtt)</option>
+          <option value="ass">ASS 字幕 (.ass)</option>
           <option value="txt">純文字 (.txt)</option>
           <option value="md">Markdown (.md)</option>
         </select>
@@ -1730,22 +1744,32 @@ self.addEventListener('message', async (e) => {
       const gpuAvailable = typeof navigator !== 'undefined' && !!navigator.gpu;
       let device, dtype;
 
+      // onnx-community/* 有分離的 encoder_model.onnx + decoder_model_merged.onnx，支援 per-module dtype
+      // Xenova/* 只有單一 model.onnx，必須使用純量 dtype 字串
+      const isOnnxCommunity = payload.modelId.startsWith('onnx-community/');
+
       if (gpuAvailable && payload.preferGpu) {
         try {
           const adapter = await navigator.gpu.requestAdapter();
           if (!adapter) throw new Error('no adapter');
           device = 'webgpu';
-          dtype  = { encoder_model: 'fp16', decoder_model_merged: 'q4' };
-          self.postMessage({ type: 'BACKEND', payload: 'webgpu' });
+          if (isOnnxCommunity) {
+            // 分離 ONNX：encoder 保留 fp16 精度，decoder 用 q4 壓縮記憶體
+            dtype = { encoder_model: 'fp16', decoder_model_merged: 'q4' };
+          } else {
+            // 單一 ONNX (Xenova)：WebGPU 預設 fp32，記憶體充足時效果最佳
+            dtype = 'fp32';
+          }
+          self.postMessage({ type: 'BACKEND', payload: { backend: 'webgpu', dtype } });
         } catch (_) {
           device = 'wasm';
           dtype  = payload.dtype;
-          self.postMessage({ type: 'BACKEND', payload: 'wasm-fallback' });
+          self.postMessage({ type: 'BACKEND', payload: { backend: 'wasm-fallback', dtype } });
         }
       } else {
         device = 'wasm';
         dtype  = payload.dtype;
-        self.postMessage({ type: 'BACKEND', payload: 'wasm' });
+        self.postMessage({ type: 'BACKEND', payload: { backend: 'wasm', dtype } });
       }
 
       pipe = await pipelineFn('automatic-speech-recognition', payload.modelId, {
@@ -1776,12 +1800,25 @@ self.addEventListener('message', async (e) => {
         self.postMessage({ type: 'DEGRADE_STRATEGY', payload: { ratio: memRatio, segIdx: payload.segIdx } });
       }
 
-      const { audioData, language, task, segIdx, startSec, strideSec } = payload;
+      const { audioData, language, task, promptText, segIdx, startSec, strideSec } = payload;
       const f32 = new Float32Array(audioData);
 
-      // 【升級二】：啟用逐字時間戳（return_timestamps: 'word'）
+      // 建立 generate_kwargs，注入 initial_prompt（若有）
+      const generateKwargs = {};
+      if (promptText && pipe.tokenizer) {
+        try {
+          // encode prompt text to token IDs (skip special tokens)
+          const promptIds = pipe.tokenizer.encode(promptText, { add_special_tokens: false });
+          if (promptIds && promptIds.length > 0) {
+            generateKwargs.prompt_ids = promptIds;
+          }
+        } catch (_) { /* 若 tokenizer 不支援，略過 */ }
+      }
+
       // 產出 result.chunks 每個元素含逐字 timestamp，後處理可進一步細分
-      let result = await pipe(f32, { language, task, return_timestamps: 'word' });
+      const callOpts = { language, task, return_timestamps: 'word' };
+      if (Object.keys(generateKwargs).length > 0) callOpts.generate_kwargs = generateKwargs;
+      let result = await pipe(f32, callOpts);
 
       self.postMessage({ type: 'CHUNK_DONE', payload: { result, segIdx, startSec, strideSec } });
       result = null;
@@ -1843,259 +1880,6 @@ function createWorker() {
   inferenceWorker = new Worker(blobUrl);
   URL.revokeObjectURL(blobUrl);
   return inferenceWorker;
-}
-
-// ══════════════════════════════════════════════════════════════════════
-//  音訊解碼 Worker（WebCodecs AudioDecoder）
-//  支援格式：MP4/M4A (AAC-LC)
-//  WebCodecs 在 Worker 內可用（Chrome 94+/Edge 94+/Safari 16.4+）
-//  回傳 Float32Array @ 16kHz mono，主執行緒完全不阻塞
-//  不支援的格式 → 主執行緒 fallback（decodeAudioData）
-// ══════════════════════════════════════════════════════════════════════
-const AUDIO_DECODE_WORKER_CODE = `
-function resampleLinear(input, srcRate, dstRate) {
-  if (srcRate === dstRate) return input;
-  const ratio  = srcRate / dstRate;
-  const outLen = Math.round(input.length * dstRate / srcRate);
-  const out    = new Float32Array(outLen);
-  for (let i = 0; i < outLen; i++) {
-    const srcIdx = i * ratio;
-    const lo     = Math.floor(srcIdx);
-    const hi     = Math.min(lo + 1, input.length - 1);
-    out[i]       = input[lo] * (1 - (srcIdx - lo)) + input[hi] * (srcIdx - lo);
-  }
-  return out;
-}
-
-function audioDataToMono(audioData) {
-  const nch = audioData.numberOfChannels;
-  const nfr = audioData.numberOfFrames;
-  const sr  = audioData.sampleRate;
-  if (nch === 1) {
-    const buf = new Float32Array(nfr);
-    audioData.copyTo(buf, { planeIndex: 0, format: 'f32-planar' });
-    return { samples: buf, sampleRate: sr };
-  }
-  const channels = [];
-  for (let c = 0; c < nch; c++) {
-    const ch = new Float32Array(nfr);
-    audioData.copyTo(ch, { planeIndex: c, format: 'f32-planar' });
-    channels.push(ch);
-  }
-  const mono = new Float32Array(nfr);
-  for (let s = 0; s < nfr; s++) {
-    let sum = 0;
-    for (let c = 0; c < nch; c++) sum += channels[c][s];
-    mono[s] = sum / nch;
-  }
-  return { samples: mono, sampleRate: sr };
-}
-
-function detectMime(u8) {
-  if (u8[4]===0x66 && u8[5]===0x74 && u8[6]===0x79 && u8[7]===0x70) return 'mp4';
-  return null;
-}
-
-function parseMp4Audio(buf) {
-  try {
-    const view = new DataView(buf);
-    const u8   = new Uint8Array(buf);
-    let off = 0;
-    const fileEnd = buf.byteLength;
-
-    function readBox(end) {
-      if (off + 8 > end) return null;
-      let size = view.getUint32(off, false);
-      const type = String.fromCharCode(u8[off+4],u8[off+5],u8[off+6],u8[off+7]);
-      const boxStart = off; off += 8;
-      if (size === 1) { size = Number(view.getBigUint64(off-8+8, false)); }
-      if (size === 0) size = end - boxStart;
-      return { type, size, start: boxStart, dataStart: off, end: boxStart + size };
-    }
-
-    function findBox(containerEnd, ...names) {
-      const saved = off;
-      while (off < containerEnd - 8) {
-        const box = readBox(containerEnd);
-        if (!box) break;
-        if (names.includes(box.type)) return box;
-        off = box.end;
-      }
-      off = saved; return null;
-    }
-
-    let moov = null;
-    while (off < fileEnd - 8) {
-      const box = readBox(fileEnd);
-      if (!box) break;
-      if (box.type === 'moov') { moov = box; break; }
-      off = box.end;
-    }
-    if (!moov) return null;
-
-    let audioTrak = null;
-    let tOff = moov.dataStart;
-    while (tOff < moov.end - 8) {
-      off = tOff;
-      const box = readBox(moov.end);
-      if (!box) break;
-      if (box.type === 'trak') {
-        off = box.dataStart;
-        const mdia2 = findBox(box.end, 'mdia');
-        if (mdia2) {
-          off = mdia2.dataStart;
-          const hdlr = findBox(mdia2.end, 'hdlr');
-          if (hdlr) {
-            const ht = String.fromCharCode(u8[hdlr.dataStart+8],u8[hdlr.dataStart+9],u8[hdlr.dataStart+10],u8[hdlr.dataStart+11]);
-            if (ht === 'soun') { audioTrak = box; break; }
-          }
-        }
-      }
-      tOff = box.end;
-    }
-    if (!audioTrak) return null;
-
-    off = audioTrak.dataStart;
-    const mdia = findBox(audioTrak.end, 'mdia'); if (!mdia) return null;
-    off = mdia.dataStart;
-    const minf = findBox(mdia.end, 'minf'); if (!minf) return null;
-    off = minf.dataStart;
-    const stbl = findBox(minf.end, 'stbl'); if (!stbl) return null;
-    off = stbl.dataStart;
-    const stsd = findBox(stbl.end, 'stsd'); if (!stsd) return null;
-
-    off = stsd.dataStart + 8;
-    const mp4aStart = off;
-    const mp4aType  = String.fromCharCode(u8[off+4],u8[off+5],u8[off+6],u8[off+7]);
-    if (mp4aType !== 'mp4a') return null;
-    const channels   = view.getUint16(mp4aStart + 8 + 16, false);
-    const sampleRate = view.getUint32(mp4aStart + 8 + 24, false) >>> 16;
-    const mp4aSize   = view.getUint32(mp4aStart, false);
-    off = mp4aStart + 28;
-
-    const esds = findBox(mp4aStart + mp4aSize, 'esds'); if (!esds) return null;
-    let ep = esds.dataStart + 4;
-    function readTag() {
-      let tag = u8[ep++], size = 0;
-      for (let i = 0; i < 4; i++) { const b=u8[ep++]; size=(size<<7)|(b&0x7F); if(!(b&0x80)) break; }
-      return { tag, size };
-    }
-    readTag(); ep += 3;
-    readTag(); ep += 13;
-    const dsiTag = readTag();
-    const description = u8.slice(ep, ep + dsiTag.size);
-
-    off = stbl.dataStart;
-    const stts = findBox(stbl.end, 'stts'); if (!stts) return null;
-    off = stts.dataStart + 4;
-    const sttsCount = view.getUint32(off, false); off += 4;
-    const sttsPairs = [];
-    for (let i = 0; i < sttsCount; i++) { sttsPairs.push({ count: view.getUint32(off,false), delta: view.getUint32(off+4,false) }); off += 8; }
-
-    off = stbl.dataStart;
-    const stsz = findBox(stbl.end, 'stsz'); if (!stsz) return null;
-    off = stsz.dataStart + 4;
-    const defSize     = view.getUint32(off, false); off += 4;
-    const sampleCount = view.getUint32(off, false); off += 4;
-    const sampleSizes = new Uint32Array(sampleCount);
-    if (defSize === 0) { for (let i=0;i<sampleCount;i++) { sampleSizes[i]=view.getUint32(off,false); off+=4; } }
-    else sampleSizes.fill(defSize);
-
-    off = stbl.dataStart;
-    const stco = findBox(stbl.end, 'stco');
-    let chunkOffsets;
-    if (stco) {
-      off = stco.dataStart + 4;
-      const cnt = view.getUint32(off,false); off += 4;
-      chunkOffsets = new Array(cnt);
-      for (let i=0;i<cnt;i++) { chunkOffsets[i]=view.getUint32(off,false); off+=4; }
-    } else {
-      off = stbl.dataStart;
-      const co64 = findBox(stbl.end, 'co64'); if (!co64) return null;
-      off = co64.dataStart + 4;
-      const cnt = view.getUint32(off,false); off += 4;
-      chunkOffsets = new Array(cnt);
-      for (let i=0;i<cnt;i++) { const hi=view.getUint32(off,false),lo=view.getUint32(off+4,false); chunkOffsets[i]=hi*0x100000000+lo; off+=8; }
-    }
-
-    off = stbl.dataStart;
-    const stsc = findBox(stbl.end, 'stsc'); if (!stsc) return null;
-    off = stsc.dataStart + 4;
-    const stscCount = view.getUint32(off,false); off += 4;
-    const stscEntries = [];
-    for (let i=0;i<stscCount;i++) { stscEntries.push({ firstChunk:view.getUint32(off,false), samplesPerChunk:view.getUint32(off+4,false) }); off+=12; }
-
-    const sampleOffsets = new Array(sampleCount);
-    let si = 0;
-    for (let ci=0; ci<stscEntries.length; ci++) {
-      const e = stscEntries[ci];
-      const nextFC = ci+1 < stscEntries.length ? stscEntries[ci+1].firstChunk : chunkOffsets.length+1;
-      for (let chunk=e.firstChunk; chunk<nextFC && si<sampleCount; chunk++) {
-        let bOff = chunkOffsets[chunk-1];
-        for (let s=0; s<e.samplesPerChunk && si<sampleCount; s++) { sampleOffsets[si]=bOff; bOff+=sampleSizes[si]; si++; }
-      }
-    }
-
-    const durations = new Uint32Array(sampleCount);
-    let di=0;
-    for (const {count,delta} of sttsPairs) { for (let k=0;k<count&&di<sampleCount;k++) durations[di++]=delta; }
-
-    const chunks = [];
-    let timestamp = 0;
-    for (let i=0; i<sampleCount; i++) {
-      const data  = u8.slice(sampleOffsets[i], sampleOffsets[i]+sampleSizes[i]);
-      const durUs = Math.round(durations[i]*1_000_000/sampleRate);
-      const tsUs  = Math.round(timestamp*1_000_000/sampleRate);
-      chunks.push(new EncodedAudioChunk({ type:'key', timestamp:tsUs, duration:durUs, data }));
-      timestamp += durations[i];
-    }
-    return { codec:'mp4a.40.2', sampleRate, channels, description, chunks };
-  } catch(e) { return null; }
-}
-
-self.addEventListener('message', async (e) => {
-  if (e.data.type !== 'DECODE') return;
-  const arrayBuffer = e.data.payload;
-  try {
-    if (typeof AudioDecoder === 'undefined') { self.postMessage({ type:'FALLBACK' }); return; }
-    const u8h   = new Uint8Array(arrayBuffer, 0, Math.min(12, arrayBuffer.byteLength));
-    const mime  = detectMime(u8h);
-    if (!mime) { self.postMessage({ type:'FALLBACK' }); return; }
-    const info  = parseMp4Audio(arrayBuffer);
-    if (!info)  { self.postMessage({ type:'FALLBACK' }); return; }
-    const sup   = await AudioDecoder.isConfigSupported({ codec:info.codec, sampleRate:info.sampleRate, numberOfChannels:info.channels, description:info.description });
-    if (!sup.supported) { self.postMessage({ type:'FALLBACK' }); return; }
-    const pcmChunks = [];
-    const decoder = new AudioDecoder({
-      output: (ad) => {
-        const { samples, sampleRate } = audioDataToMono(ad);
-        pcmChunks.push(resampleLinear(samples, sampleRate, SR));
-        ad.close();
-      },
-      error: () => self.postMessage({ type:'FALLBACK' }),
-    });
-    decoder.configure(sup.config);
-    for (const chunk of info.chunks) decoder.decode(chunk);
-    await decoder.flush();
-    decoder.close();
-    let total = 0; for (const c of pcmChunks) total += c.length;
-    const merged = new Float32Array(total);
-    let woff = 0; for (const c of pcmChunks) { merged.set(c, woff); woff += c.length; }
-    self.postMessage({ type:'DONE', samples: merged }, [merged.buffer]);
-  } catch(err) {
-    self.postMessage({ type:'FALLBACK', error: err.message });
-  }
-});
-`;
-
-let _audioDecodeWorker = null;
-function getAudioDecodeWorker() {
-  if (_audioDecodeWorker) return _audioDecodeWorker;
-  const blob    = new Blob([AUDIO_DECODE_WORKER_CODE], { type: 'application/javascript' });
-  const blobUrl = URL.createObjectURL(blob);
-  _audioDecodeWorker = new Worker(blobUrl);
-  URL.revokeObjectURL(blobUrl);
-  return _audioDecodeWorker;
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -2279,22 +2063,6 @@ function chunksToSrtWithSpeakers(chunks) {
   return out.trimEnd();
 }
 
-// 嘗試 WebCodecs Worker 解碼（MP4/M4A），失敗回 null → 主執行緒 fallback
-async function tryDecodeViaWorker(arrayBuffer) {
-  return new Promise((resolve) => {
-    if (typeof AudioDecoder === 'undefined') return resolve(null);
-    let worker;
-    try { worker = getAudioDecodeWorker(); } catch { return resolve(null); }
-    const timer = setTimeout(() => { worker.removeEventListener('message', onDecodeMsg); resolve(null); }, 120_000);
-    function onDecodeMsg(ev) {
-      clearTimeout(timer);
-      worker.removeEventListener('message', onDecodeMsg);
-      resolve(ev.data.type === 'DONE' ? ev.data.samples : null);
-    }
-    worker.addEventListener('message', onDecodeMsg);
-    worker.postMessage({ type: 'DECODE', payload: arrayBuffer }, [arrayBuffer]);
-  });
-}
 
 function workerCall(worker, msgType, payload, resolveOn, timeoutMs = 300_000) {
   return new Promise((resolve, reject) => {
@@ -2439,7 +2207,51 @@ function chunksToMarkdown(chunks) {
   return lines.join('\n');
 }
 
-function getExtension(fmt) { return { srt: 'srt', vtt: 'vtt', txt: 'txt', md: 'md' }[fmt] || 'srt'; }
+function chunksToAss(chunks) {
+  // ASS/SSA v4+ format (SubStation Alpha) — compatible with Aegisub and most video players
+  function fmtAss(sec) {
+    sec = Math.max(0, sec);
+    const totalCs = Math.round(sec * 100);   // centiseconds
+    const cs  = totalCs % 100;
+    const tot = Math.floor(totalCs / 100);
+    const h   = Math.floor(tot / 3600);
+    const m   = Math.floor((tot % 3600) / 60);
+    const s   = tot % 60;
+    return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(cs).padStart(2,'0')}`;
+  }
+
+  const header = `[Script Info]
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Noto Sans TC,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,80,80,40,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`;
+
+  const events = chunks
+    .filter(c => c.timestamp && c.timestamp[0] != null)
+    .map(c => {
+      const start  = fmtAss(c.timestamp[0]);
+      const rawEnd = c.timestamp[1] != null ? c.timestamp[1] : c.timestamp[0] + 2;
+      const end    = fmtAss(Math.max(rawEnd, c.timestamp[0] + 0.01));
+      // Escape ASS special chars: { } \n in text
+      const text   = c.text.trim()
+        .replace(/\{/g, '\\{').replace(/\}/g, '\\}')
+        .replace(/\r?\n/g, '\\N');
+      return `Dialogue: 0,${start},${end},Default,,0,0,0,,${text}`;
+    })
+    .join('\n');
+
+  return header + '\n' + events + '\n';
+}
+
+function getExtension(fmt) { return { srt: 'srt', vtt: 'vtt', ass: 'ass', txt: 'txt', md: 'md' }[fmt] || 'srt'; }
 
 const logBox    = document.getElementById('logBox');
 const progLabel = document.getElementById('progLabel');
@@ -2641,11 +2453,17 @@ document.querySelectorAll('.model-btn').forEach(btn => {
     const br = document.createElement('br');
     const hint = document.createElement('span');
     hint.style.cssText = 'color:var(--warn);font-size:0.72em;';
-    hint.textContent = `⚙ 量化：查詢中… ／ 後端：${hasGpu ? '⚡ WebGPU' : '⚪ WASM'}`;
-    // 非同步查詢 ModelRegistry 後更新提示
-    chooseDtype(selectedModel).then(dtype => {
-      hint.textContent = `⚙ 量化：${dtype} ／ 後端：${hasGpu ? '⚡ WebGPU' : '⚪ WASM'}`;
-    });
+    // WebGPU 時顯示 per-module dtype 預期值；載入後 BACKEND message 更新為實際值
+    const isOnnxCommunity = selectedModel.startsWith('onnx-community/');
+    if (hasGpu) {
+      const dtypeStr = isOnnxCommunity ? 'enc:fp16 / dec:q4' : 'fp32';
+      hint.textContent = `⚙ 量化：${dtypeStr} ／ 後端：⚡ WebGPU（載入中更新）`;
+    } else {
+      hint.textContent = `⚙ 量化：查詢中… ／ 後端：⚪ WASM`;
+      chooseDtype(selectedModel).then(dtype => {
+        hint.textContent = `⚙ 量化：${dtype} ／ 後端：⚪ WASM`;
+      });
+    }
     infoBox.appendChild(strong);
     infoBox.appendChild(textNode);
     infoBox.appendChild(br);
@@ -2976,21 +2794,6 @@ async function decodeAudio(file) {
 
 
   let mono = null;
-
-  // ── 路徑 A：WebCodecs Worker（MP4/M4A，不阻塞主執行緒）─────────
-  const ext = file.name.split('.').pop().toLowerCase();
-  const useWorkerPath = ['mp4', 'm4a', 'mov'].includes(ext) && typeof AudioDecoder !== 'undefined';
-  if (useWorkerPath) {
-    log('解碼音訊中（WebCodecs Worker）...', 'info');
-    const arrayBuf = await file.arrayBuffer();
-    if (isCancelled) throw new Error('CANCELLED');
-    mono = await tryDecodeViaWorker(arrayBuf);
-    if (mono) {
-      log('✓ WebCodecs Worker 解碼完成', 'ok');
-    } else {
-      log('⚠ WebCodecs 解碼失敗，切換至主執行緒模式', 'warn');
-    }
-  }
 
   // ── 路徑 B：主執行緒 decodeAudioData（通用 fallback）──────────
   if (!mono) {
@@ -3436,7 +3239,17 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
             setProgress(50, '載入模型至記憶體...', true);
           }
         } else if (t === 'BACKEND') {
-          document.getElementById('statModel').textContent = x === 'webgpu' ? '⚡GPU' : 'CPU';
+          const isGpu = x.backend === 'webgpu';
+          document.getElementById('statModel').textContent = isGpu ? '⚡GPU' : 'CPU';
+          // 更新 infoBox hint 顯示實際使用的 dtype
+          const hint = document.querySelector('#infoBox span');
+          if (hint) {
+            const dtypeStr = (x.dtype && typeof x.dtype === 'object')
+              ? `enc:${x.dtype.encoder_model ?? '?'} / dec:${x.dtype.decoder_model_merged ?? '?'}`
+              : (x.dtype ?? '?');
+            const backendStr = isGpu ? '⚡ WebGPU' : (x.backend === 'wasm-fallback' ? '⚠ WASM(GPU失敗)' : '⚪ WASM');
+            hint.textContent = `⚙ 量化：${dtypeStr} ／ 後端：${backendStr}`;
+          }
         }
       };
       worker.addEventListener('message', progressHandler);
@@ -3465,8 +3278,10 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
 
     if (isCancelled) throw new Error('CANCELLED');
 
-    const language = document.getElementById('language').value || undefined;
-    const task     = document.getElementById('task').value;
+    const language   = document.getElementById('language').value || undefined;
+    const task       = document.getElementById('task').value;
+    const promptText = document.getElementById('initialPrompt').value.trim() || null;
+    if (promptText) log(`💬 初始提示詞已啟用（${promptText.length} 字元）`, 'info');
     let   CHUNK_SEC  = _dynamicChunkSec;  // 動態調整，初始 30
     const STRIDE_SEC = 5;
     const totalSamples = audio instanceof Float32Array ? audio.length : audio.totalSamples;
@@ -3533,7 +3348,7 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
             reject(new Error(`段落推論逾時`));
           }, 300_000);
           worker.addEventListener('message', handler);
-          worker.postMessage({ type: 'RUN_CHUNK', payload: { audioData: transfer, language, task, segIdx: i, startSec: seg.startSec, strideSec: STRIDE_SEC } }, [transfer]);
+          worker.postMessage({ type: 'RUN_CHUNK', payload: { audioData: transfer, language, task, promptText, segIdx: i, startSec: seg.startSec, strideSec: STRIDE_SEC } }, [transfer]);
         });
       } catch (segErr) {
         if (segErr.message === 'CANCELLED') throw segErr;
@@ -3569,7 +3384,7 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
             };
             dt = setTimeout(() => { ur(); worker.removeEventListener('message', dh); reject(new Error('降級重試逾時')); }, 300_000);
             worker.addEventListener('message', dh);
-            worker.postMessage({ type: 'RUN_CHUNK', payload: { audioData: retryBuf2, language, task, segIdx: i, startSec: seg.startSec, strideSec: STRIDE_SEC } }, [retryBuf2]);
+            worker.postMessage({ type: 'RUN_CHUNK', payload: { audioData: retryBuf2, language, task, promptText, segIdx: i, startSec: seg.startSec, strideSec: STRIDE_SEC } }, [retryBuf2]);
           });
         } catch (dErr) { if (dErr.message === 'CANCELLED') throw dErr; i++; continue; }
       }
@@ -3613,7 +3428,7 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
               }
             };
             worker.addEventListener('message', h);
-            worker.postMessage({ type: 'RUN_CHUNK', payload: { audioData: retryBuf, language, task, segIdx: i, startSec: seg.startSec, strideSec: STRIDE_SEC } }, [retryBuf]);
+            worker.postMessage({ type: 'RUN_CHUNK', payload: { audioData: retryBuf, language, task, promptText, segIdx: i, startSec: seg.startSec, strideSec: STRIDE_SEC } }, [retryBuf]);
           });
         } catch (retryErr) {
           if (retryErr.message === 'CANCELLED') throw retryErr;
@@ -3626,7 +3441,6 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
       }
 
       const { result, startSec: chunkStart, strideSec: chunkStride } = evt.payload;
-      // 【升級二】：word-level 時間戳合併策略
       // result.chunks 為逐字陣列；將相鄰字組合為自然字幕句組
       // 合併條件：gap < 0.5s 且目前組合長度 < 35 字
       const segChunks = result.chunks ?? [];
@@ -3731,6 +3545,7 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
 
     if (fmt2 === 'srt')       outputContent = chunks.length === 0 ? `1\n00:00:00,000 --> 00:00:05,000\n（無辨識結果）` : (diarSegments ? chunksToSrtWithSpeakers(chunks) : chunksToSrt(chunks));
     else if (fmt2 === 'vtt')  outputContent = chunks.length === 0 ? `WEBVTT\n\n00:00:00.000 --> 00:00:05.000\n（無辨識結果）\n` : chunksToVtt(chunks);
+    else if (fmt2 === 'ass')  outputContent = chunks.length === 0 ? chunksToAss([{timestamp:[0,5],text:'（無辨識結果）'}]) : chunksToAss(chunks);
     else if (fmt2 === 'txt')  outputContent = chunks.length === 0 ? '（無辨識結果）' : chunksToTxt(chunks);
     else if (fmt2 === 'md')   outputContent = chunks.length === 0 ? `# 字幕文字稿\n\n（無辨識結果）` : chunksToMarkdown(chunks);
 
@@ -3816,12 +3631,8 @@ cancelBtn.addEventListener('click', () => {
     workerReady = false;
     pipe = null;
   }
-  if (_audioDecodeWorker) {
-    _audioDecodeWorker.terminate();
-    _audioDecodeWorker = null;
-  }
-  // 注意：Diarization Worker 保留（已下載模型，重啟代價高）
-  // 但若正在執行中，postMessage CANCEL 令其中止
+  // Diarization Worker 保留（已下載模型，重啟代價高）
+  // 若正在執行中，postMessage CANCEL 令其中止
   if (_diarizationWorker) {
     _diarizationWorker.postMessage({ type: 'CANCEL' });
   }
@@ -3943,8 +3754,8 @@ startBtn.addEventListener('click', async () => {
   if (pendingItems.length > 1) {
     const zipableCount = batchQueue.filter(i => i.status === 'done' && i.dlUrl).length;
     batchSummaryStats.innerHTML = `
-      ✅ 完成：${doneCount} 個　　
-      ❌ 失敗：${errorCount} 個　　
+      ✅ 完成：${doneCount} 個
+      ❌ 失敗：${errorCount} 個
       ⚠️ 取消：${cancelledCount} 個<br>
       ${outFolderHandle ? `📁 已自動儲存至：${escapeHtml(outFolderHandle.name)}/` : '⬇ 請點擊各檔案的下載按鈕'}
     `;
