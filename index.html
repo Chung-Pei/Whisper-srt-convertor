@@ -1765,7 +1765,9 @@ let modelFolderHandle = null;
 async function readFromModelFolder(relativePath) {
   if (!modelFolderHandle) return null;
   try {
-    const parts = relativePath.split('/');
+    // 【安全修復】：過濾 '..' 路徑片段，防止目錄遍歷攻擊
+    const parts = relativePath.split('/').filter(p => p && p !== '..' && p !== '.');
+    if (parts.length === 0) return null;
     let dir = modelFolderHandle;
     for (let i = 0; i < parts.length - 1; i++) {
       dir = await dir.getDirectoryHandle(parts[i], { create: false });
@@ -1778,7 +1780,9 @@ async function readFromModelFolder(relativePath) {
 async function writeToModelFolder(relativePath, responseClone) {
   if (!modelFolderHandle) return;
   try {
-    const parts = relativePath.split('/');
+    // 【安全修復】：過濾 '..' 路徑片段，防止目錄遍歷攻擊
+    const parts = relativePath.split('/').filter(p => p && p !== '..' && p !== '.');
+    if (parts.length === 0) return;
     let dir = modelFolderHandle;
     for (let i = 0; i < parts.length - 1; i++) {
       dir = await dir.getDirectoryHandle(parts[i], { create: true });
@@ -1814,8 +1818,12 @@ function installFolderFetchInterceptor() {
   self._originalFetch = self.fetch;
   self.fetch = async function(resource, init) {
     const url = typeof resource === 'string' ? resource : (resource instanceof Request ? resource.url : null);
-    if (url && /huggingface\.co/.test(url)) {
-      const urlObj = new URL(url);
+    if (url) {
+      let urlObj_chk;
+      try { urlObj_chk = new URL(url); } catch { return self._originalFetch(resource, init); }
+      // 【安全修復】：驗證 hostname，防止 URL 含 'huggingface.co' 子字串繞過攔截
+      if (urlObj_chk.hostname !== 'huggingface.co') return self._originalFetch(resource, init);
+      const urlObj = urlObj_chk;
       const rawPath = urlObj.pathname.slice(1);
       const localPath = rawPath.replace('/resolve/main/', '/');
 
@@ -2590,7 +2598,9 @@ function resetEta() {
 
 function log(msg, type = '') {
   const progArea = document.getElementById('progArea');
-  if (!progArea.classList.contains('show')) return;
+  // 【邏輯修復】：移除靜默丟棄邏輯；若 progArea 隱藏仍記錄日誌，
+  // 待 progArea 顯示時使用者可見歷史訊息（含初始化錯誤）
+  if (!progArea.classList.contains('show')) progArea.classList.add('show');
   logBox.classList.add('show');
   const ts   = new Date().toTimeString().slice(0,8);
   const line = document.createElement('div');
@@ -2610,7 +2620,9 @@ function log(msg, type = '') {
 async function checkModelExistsInFolder(relativePath) {
   if (!modelFolderHandle) return false;
   try {
-    const parts = relativePath.split('/');
+    // 【安全修復】：過濾 '..' 路徑片段，與 Worker 端保持一致
+    const parts = relativePath.split('/').filter(p => p && p !== '..' && p !== '.');
+    if (parts.length === 0) return false;
     let dir = modelFolderHandle;
     for (let i = 0; i < parts.length - 1; i++) {
       dir = await dir.getDirectoryHandle(parts[i], { create: false });
@@ -3150,7 +3162,8 @@ async function decodeAudio(file) {
   const diarWillRun = document.getElementById('tog_diarization')?.checked;
 
   if (file.size > LARGE_FILE_THRESHOLD) {
-    const cacheKey = `audio:${file.name}:${file.size}:${file.lastModified}`;
+    // 【安全修復】：對 file.name 進行 URI 編碼，防止含 ':' 的檔名與 IDB 鍵格式衝突
+    const cacheKey = `audio:${encodeURIComponent(file.name)}:${file.size}:${file.lastModified}`;
     log(`大檔案偵測（${formatSize(file.size)}）→ 嘗試分片存入 IndexedDB`, 'warn');
     try {
       // 若 Diarization 啟用，先保留 mono 副本（最多 10 分鐘音訊 @ 16kHz）
@@ -3496,7 +3509,15 @@ function getOutputBasename(file) {
     return custom.replace(/[/\\:*?"<>|]/g, '_').replace(/^\.+/, '') || 'subtitles';
   }
   const f = file || selectedFile;
-  if (f) return f.name.replace(/\.[^.]+$/, '');
+  if (f) {
+    // 【安全修復】：移除副檔名後，過濾 FSA 非法字元（null byte、控制字元）及保留名稱
+    const base = f.name.replace(/\.[^.]+$/, '')
+      .replace(/[\x00-\x1f\x7f]/g, '')   // 控制字元（含 null byte）
+      .replace(/[/\\:*?"<>|]/g, '_')       // FSA / OS 非法字元
+      .replace(/^\.+/, '')                  // 開頭點號
+      .trim() || 'subtitles';
+    return base;
+  }
   return 'subtitles';
 }
 
@@ -5472,6 +5493,20 @@ function detectHallucinations(subs, gapThreshold = 3.0, speedThreshold = 12) {
 
   function hasRepeatNgram(text, minN = 2) {
     const clean = text.trim();
+    // 【邏輯修復】：中文無空格，改用字元級 n-gram（2–4字）偵測重複
+    const isCjk = /[\u4e00-\u9fff]/.test(clean);
+    if (isCjk) {
+      for (let n = 2; n <= 4; n++) {
+        for (let i = 0; i <= clean.length - n * 2; i++) {
+          const gram = clean.slice(i, i + n);
+          const escaped = gram.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const re = new RegExp(escaped, 'g');
+          if ((clean.match(re) || []).length >= 2) return true;
+        }
+      }
+      return false;
+    }
+    // 英文走原本空格切分邏輯
     for (let n = minN; n <= 4; n++) {
       const grams = [...getNgrams(clean, n)];
       for (const g of grams) {
