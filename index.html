@@ -1394,6 +1394,23 @@
         </div>
         <label class="toggle-switch"><input type="checkbox" id="tog_normalize" checked><span class="toggle-slider"></span></label>
       </div>
+
+      <div class="post-section-label">人聲分離</div>
+
+      <div class="post-toggle-row">
+        <div class="post-toggle-info">
+          <div class="post-toggle-name">🎤 UVR 人聲分離 <span class="fuzzy-badge">MDX-Net</span></div>
+          <div class="post-toggle-desc">使用 Kim_Vocal_2 模型分離人聲與背景音樂，大幅減少幻覺字幕（首次需下載 ~63MB 模型）。適合含背景音樂的影片、廣播錄音。純演講/會議建議關閉。</div>
+        </div>
+        <label class="toggle-switch"><input type="checkbox" id="tog_uvr"><span class="toggle-slider"></span></label>
+      </div>
+      <div class="post-params cols1" id="params_uvr" style="display:none;">
+        <div class="param-group">
+          <label>分離強度（Margin）</label>
+          <input type="number" id="p_uvr_margin" value="44100" min="8820" max="88200" step="4410">
+          <span style="font-size:0.68rem;color:var(--muted);font-family:'IBM Plex Mono',monospace;">44100 = 標準（1秒），較大值 = 更乾淨人聲但略慢</span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1673,6 +1690,10 @@
       <a class="btn-dl" id="dlBtn" href="#" download>⬇ 下載至預設路徑</a>
       <button class="btn-save-folder" id="btnSaveToFolder" disabled>📁 儲存至指定資料夾</button>
     </div>
+    <a id="dlVocalBtn" class="btn-dl" href="#" download="vocals.wav"
+       style="display:none;margin-top:0.5rem;width:100%;text-align:center;background:rgba(0,229,160,0.07);border-color:var(--accent);color:var(--accent);">
+      🎤 下載人聲音訊（WAV）
+    </a>
   </div>
 </div>
 
@@ -3479,6 +3500,427 @@ function getOutputBasename(file) {
   return 'subtitles';
 }
 
+// ── UVR 人聲分離（MDX-Net Kim_Vocal_2）──────────────────────────────
+const UVR_MODEL_NAME = 'Kim_Vocal_2.onnx';
+const UVR_MODEL_URL  = 'https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/Kim_Vocal_2.onnx';
+const UVR_IDB_KEY    = 'uvr:Kim_Vocal_2';
+const ORT_WEB_CDN    = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/';
+
+// MDX-Net 參數（Kim_Vocal_2 固定值）
+const UVR_N_FFT    = 7680;
+const UVR_DIM_F    = 2048;
+const UVR_DIM_T    = 256;
+const UVR_HOP      = UVR_N_FFT / 4;    // 1920
+const UVR_SR       = 44100;
+
+let _uvrWorker     = null;
+let _uvrModelReady = false;
+
+// ── UVR Worker blob 程式碼 ──────────────────────────────────────────
+const UVR_WORKER_CODE = `
+'use strict';
+// 載入 onnxruntime-web WASM 後端
+let ort = null;
+let session = null;
+const ORT_CDN = '${ORT_WEB_CDN}';
+
+async function loadOrt() {
+  if (ort) return;
+  importScripts(ORT_CDN + 'ort.min.js');
+  ort = self.ort;
+  ort.env.wasm.wasmPaths = ORT_CDN;
+}
+
+// ── 純 JS Hann 窗 STFT（Radix-2 Cooley-Tukey FFT）──────────────────
+function hannWindow(n) {
+  const w = new Float32Array(n);
+  for (let i = 0; i < n; i++) w[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / n));
+  return w;
+}
+
+function fft(re, im) {
+  const n = re.length;
+  // Bit-reversal permutation
+  let j = 0;
+  for (let i = 1; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      [re[i], re[j]] = [re[j], re[i]];
+      [im[i], im[j]] = [im[j], im[i]];
+    }
+  }
+  // Cooley-Tukey butterfly
+  for (let len = 2; len <= n; len <<= 1) {
+    const half = len >> 1;
+    const ang  = -2 * Math.PI / len;
+    for (let i = 0; i < n; i += len) {
+      for (let k = 0; k < half; k++) {
+        const cos = Math.cos(ang * k), sin = Math.sin(ang * k);
+        const tr = cos * re[i+k+half] - sin * im[i+k+half];
+        const ti = sin * re[i+k+half] + cos * im[i+k+half];
+        re[i+k+half] = re[i+k] - tr;  im[i+k+half] = im[i+k] - ti;
+        re[i+k]     += tr;             im[i+k]     += ti;
+      }
+    }
+  }
+}
+
+function stft(mono, nFft, hop, win) {
+  const frames = Math.floor((mono.length - nFft) / hop) + 1;
+  const bins   = nFft / 2 + 1;
+  // re[frames][bins], im[frames][bins]
+  const reArr = new Array(frames), imArr = new Array(frames);
+  for (let f = 0; f < frames; f++) {
+    const re = new Float64Array(nFft), im = new Float64Array(nFft);
+    for (let i = 0; i < nFft; i++) re[i] = (mono[f * hop + i] ?? 0) * win[i];
+    fft(re, im);
+    reArr[f] = new Float32Array(bins);
+    imArr[f] = new Float32Array(bins);
+    for (let b = 0; b < bins; b++) { reArr[f][b] = re[b]; imArr[f][b] = im[b]; }
+  }
+  return { re: reArr, im: imArr, frames, bins };
+}
+
+function istft(re, im, nFft, hop, win, length) {
+  const out  = new Float32Array(length);
+  const norm = new Float32Array(length);
+  const frames = re.length;
+  for (let f = 0; f < frames; f++) {
+    // Build full symmetric spectrum
+    const fullRe = new Float64Array(nFft), fullIm = new Float64Array(nFft);
+    const bins = nFft / 2 + 1;
+    for (let b = 0; b < bins; b++) {
+      fullRe[b] = re[f][b]; fullIm[b] = im[f][b];
+      if (b > 0 && b < bins - 1) {
+        fullRe[nFft - b] = re[f][b]; fullIm[nFft - b] = -im[f][b];
+      }
+    }
+    // Inverse FFT via conjugate trick
+    for (let i = 0; i < nFft; i++) fullIm[i] = -fullIm[i];
+    fft(fullRe, fullIm);
+    for (let i = 0; i < nFft; i++) {
+      fullRe[i] /= nFft;
+      fullIm[i] /= nFft;
+    }
+    // Overlap-add with Hann window
+    const start = f * hop;
+    for (let i = 0; i < nFft && start + i < length; i++) {
+      out[start + i]  += fullRe[i] * win[i];
+      norm[start + i] += win[i] * win[i];
+    }
+  }
+  // Normalize
+  for (let i = 0; i < length; i++) if (norm[i] > 1e-8) out[i] /= norm[i];
+  return out;
+}
+
+// ── MDX-Net 推論 ───────────────────────────────────────────────────
+async function separateVocals(stereoL, stereoR, margin) {
+  const nFft = ${UVR_N_FFT}, dimF = ${UVR_DIM_F}, dimT = ${UVR_DIM_T}, hop = ${UVR_HOP};
+  const win  = hannWindow(nFft);
+
+  // Mix-to-mono for model input
+  const mono = new Float32Array(stereoL.length);
+  for (let i = 0; i < stereoL.length; i++) mono[i] = (stereoL[i] + stereoR[i]) * 0.5;
+
+  // STFT
+  const { re, im, frames, bins } = stft(mono, nFft, hop, win);
+
+  // Build magnitude spectrogram chunks for model (dimF × dimT)
+  const chunkFrames  = dimT;
+  const chunkBins    = dimF;
+  const overlap      = Math.floor(margin / hop);
+  const step         = chunkFrames - overlap;
+  const numChunks    = Math.max(1, Math.ceil((frames - overlap) / step));
+
+  // Accumulate masked magnitudes
+  const outRe = re.map(f => new Float32Array(bins));
+  const outIm = im.map(f => new Float32Array(bins));
+  const wSum  = new Float32Array(frames);
+
+  for (let c = 0; c < numChunks; c++) {
+    if (c % 4 === 0) self.postMessage({ type: 'PROGRESS', pct: Math.round(c / numChunks * 80) });
+
+    const start = c * step;
+    // Build input tensor [1, 2, dimF, dimT] (real + imag channels)
+    const tensor = new Float32Array(2 * chunkBins * chunkFrames);
+    for (let t = 0; t < chunkFrames; t++) {
+      const f = start + t;
+      const reRow = f < frames ? re[f] : new Float32Array(bins);
+      const imRow = f < frames ? im[f] : new Float32Array(bins);
+      for (let b = 0; b < chunkBins; b++) {
+        tensor[0 * chunkBins * chunkFrames + b * chunkFrames + t] = reRow[b];
+        tensor[1 * chunkBins * chunkFrames + b * chunkFrames + t] = imRow[b];
+      }
+    }
+
+    const inputTensor = new ort.Tensor('float32', tensor, [1, 2, chunkBins, chunkFrames]);
+    const feeds = {};
+    feeds[session.inputNames[0]] = inputTensor;
+    const results = await session.run(feeds);
+    const mask    = results[session.outputNames[0]].data;  // [1,2,dimF,dimT] mask
+
+    // Apply mask and accumulate with Hann-weighted overlap
+    for (let t = 0; t < chunkFrames; t++) {
+      const f = start + t;
+      if (f >= frames) continue;
+      const w = win[Math.min(t, nFft - 1)] ?? 1;
+      for (let b = 0; b < chunkBins && b < bins; b++) {
+        const mRe = mask[0 * chunkBins * chunkFrames + b * chunkFrames + t];
+        const mIm = mask[1 * chunkBins * chunkFrames + b * chunkFrames + t];
+        // Complex mask multiplication: (mRe + j*mIm) * (re + j*im)
+        outRe[f][b] += w * (mRe * re[f][b] - mIm * im[f][b]);
+        outIm[f][b] += w * (mRe * im[f][b] + mIm * re[f][b]);
+      }
+      wSum[f] += w;
+    }
+  }
+
+  // Normalize accumulated output
+  for (let f = 0; f < frames; f++) {
+    const w = wSum[f] > 1e-8 ? wSum[f] : 1;
+    for (let b = 0; b < bins; b++) { outRe[f][b] /= w; outIm[f][b] /= w; }
+  }
+
+  // iSTFT → vocal mono
+  const vocalMono = istft(outRe, outIm, nFft, hop, win, mono.length);
+
+  // Return stereo via difference: vocals = model output, background = input - vocals
+  // Use mono vocal as both channels (simplest correct approach)
+  return { vocalL: vocalMono, vocalR: vocalMono };
+}
+
+// ── Worker message handler ──────────────────────────────────────────
+self.addEventListener('message', async (e) => {
+  const { type, payload } = e.data;
+
+  if (type === 'LOAD') {
+    try {
+      await loadOrt();
+      // Receive model ArrayBuffer from main thread
+      session = await ort.InferenceSession.create(payload.modelBuffer, {
+        executionProviders: ['wasm'],
+        graphOptimizationLevel: 'all',
+        executionMode: 'sequential',
+      });
+      self.postMessage({ type: 'READY' });
+    } catch (err) {
+      self.postMessage({ type: 'ERROR', message: err.message });
+    }
+    return;
+  }
+
+  if (type === 'SEPARATE') {
+    try {
+      const { stereoL, stereoR, margin } = payload;
+      const { vocalL, vocalR } = await separateVocals(stereoL, stereoR, margin);
+      self.postMessage({ type: 'DONE', vocalL, vocalR }, [vocalL.buffer, vocalR.buffer]);
+    } catch (err) {
+      self.postMessage({ type: 'ERROR', message: err.message });
+    }
+  }
+});
+`;
+
+// ── 取得或建立 UVR Worker ───────────────────────────────────────────
+function getUvrWorker() {
+  if (_uvrWorker) return _uvrWorker;
+  const blob = new Blob([UVR_WORKER_CODE], { type: 'application/javascript' });
+  const url  = URL.createObjectURL(blob);
+  _uvrWorker = new Worker(url);
+  URL.revokeObjectURL(url);
+  return _uvrWorker;
+}
+
+// ── 從 modelFolderHandle 讀取 UVR 模型 ─────────────────────────────
+async function readUvrModelFromFolder(folderHandle) {
+  try {
+    // 遞迴搜尋：根目錄 + 常見子資料夾
+    const searchDirs = [folderHandle];
+    try { searchDirs.push(await folderHandle.getDirectoryHandle('uvr')); } catch {}
+    try { searchDirs.push(await folderHandle.getDirectoryHandle('UVR')); } catch {}
+    try { searchDirs.push(await folderHandle.getDirectoryHandle('models')); } catch {}
+
+    for (const dir of searchDirs) {
+      try {
+        const fh   = await dir.getFileHandle(UVR_MODEL_NAME);
+        const file = await fh.getFile();
+        log(`📁 從資料夾讀取 ${UVR_MODEL_NAME}（${(file.size/1024/1024).toFixed(1)}MB）`, 'ok');
+        return await file.arrayBuffer();
+      } catch {}
+    }
+  } catch {}
+  return null;
+}
+
+// ── 從 IDB 讀取 UVR 模型快取 ────────────────────────────────────────
+async function readUvrModelFromIDB() {
+  try {
+    const db  = await openIDB();
+    const tx  = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).get(UVR_IDB_KEY);
+    return await new Promise((res, rej) => {
+      req.onsuccess = () => res(req.result ? req.result.buffer : null);
+      req.onerror   = () => res(null);
+    });
+  } catch { return null; }
+}
+
+// ── 儲存 UVR 模型至 IDB ─────────────────────────────────────────────
+async function saveUvrModelToIDB(buffer) {
+  try {
+    const db = await openIDB();
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put({ buffer }, UVR_IDB_KEY);
+    await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+  } catch (e) { console.warn('UVR IDB 儲存失敗', e); }
+}
+
+// ── 儲存 UVR 模型至使用者資料夾 ────────────────────────────────────
+async function saveUvrModelToFolder(folderHandle, buffer) {
+  try {
+    const fh       = await folderHandle.getFileHandle(UVR_MODEL_NAME, { create: true });
+    const writable = await fh.createWritable();
+    await writable.write(buffer);
+    await writable.close();
+    log(`✓ ${UVR_MODEL_NAME} 已儲存至資料夾：${folderHandle.name}/`, 'ok');
+  } catch (e) { console.warn('UVR 模型寫入資料夾失敗', e); }
+}
+
+// ── 下載並快取 UVR 模型（主流程）───────────────────────────────────
+async function loadUvrModel(onProgress) {
+  // ① 使用者資料夾優先
+  if (modelFolderHandle) {
+    const buf = await readUvrModelFromFolder(modelFolderHandle);
+    if (buf) return buf;
+  }
+  // ② IndexedDB 快取
+  const idbBuf = await readUvrModelFromIDB();
+  if (idbBuf) {
+    log(`💾 從 IndexedDB 讀取 ${UVR_MODEL_NAME} 快取`, 'ok');
+    return idbBuf;
+  }
+  // ③ 從 GitHub 下載
+  log(`🌐 首次下載 ${UVR_MODEL_NAME}（~63MB）...`, 'info');
+  const response = await fetch(UVR_MODEL_URL);
+  if (!response.ok) throw new Error(`UVR 模型下載失敗：${response.status}`);
+  const contentLength = response.headers.get('content-length');
+  const total = contentLength ? parseInt(contentLength) : 63 * 1024 * 1024;
+  const reader = response.body.getReader();
+  const chunks = [];
+  let loaded = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.length;
+    if (onProgress) onProgress(Math.round(loaded / total * 100));
+  }
+  const buffer = await new Blob(chunks).arrayBuffer();
+  // 非同步儲存（不阻塞推論）
+  if (modelFolderHandle) {
+    saveUvrModelToFolder(modelFolderHandle, buffer.slice(0));
+  } else {
+    saveUvrModelToIDB(buffer.slice(0));
+  }
+  return buffer;
+}
+
+// ── 執行 UVR 分離（主執行緒呼叫）──────────────────────────────────
+async function runUVR(rawAudioBuffer, margin) {
+  const worker = getUvrWorker();
+
+  // 解碼原始音訊為 44.1kHz 立體聲（使用原始 arrayBuffer）
+  let stereoL, stereoR;
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: UVR_SR });
+    const decoded  = await audioCtx.decodeAudioData(rawAudioBuffer);
+    audioCtx.close();
+    if (decoded.numberOfChannels >= 2) {
+      stereoL = decoded.getChannelData(0).slice();
+      stereoR = decoded.getChannelData(1).slice();
+    } else {
+      stereoL = decoded.getChannelData(0).slice();
+      stereoR = stereoL.slice();
+    }
+  } catch (err) {
+    throw new Error('UVR 音訊解碼失敗：' + err.message);
+  }
+
+  // 若 Worker 尚未載入模型，先載入
+  if (!_uvrModelReady) {
+    const modelBuf = await loadUvrModel((pct) => {
+      setProgress(50 + pct * 0.1, `下載 UVR 模型 ${pct}%`);
+    });
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('UVR 模型載入逾時')), 120_000);
+      const onMsg = (e) => {
+        if (e.data.type === 'READY')  { clearTimeout(timer); worker.removeEventListener('message', onMsg); _uvrModelReady = true; resolve(); }
+        if (e.data.type === 'ERROR')  { clearTimeout(timer); worker.removeEventListener('message', onMsg); reject(new Error(e.data.message)); }
+      };
+      worker.addEventListener('message', onMsg);
+      worker.postMessage({ type: 'LOAD', payload: { modelBuffer: modelBuf } }, [modelBuf]);
+    });
+  }
+
+  // 執行分離
+  setProgress(60, 'UVR 人聲分離中...', true);
+  return await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('UVR 推論逾時')), 600_000);
+    const onMsg = (e) => {
+      if (e.data.type === 'DONE') {
+        clearTimeout(timer);
+        worker.removeEventListener('message', onMsg);
+        resolve({ vocalL: e.data.vocalL, vocalR: e.data.vocalR });
+      } else if (e.data.type === 'ERROR') {
+        clearTimeout(timer);
+        worker.removeEventListener('message', onMsg);
+        reject(new Error(e.data.message));
+      } else if (e.data.type === 'PROGRESS') {
+        setProgress(60 + e.data.pct * 0.15, `UVR 分離中 ${e.data.pct}%`);
+      }
+    };
+    worker.addEventListener('message', onMsg);
+    worker.postMessage(
+      { type: 'SEPARATE', payload: { stereoL, stereoR, margin } },
+      [stereoL.buffer, stereoR.buffer]
+    );
+  });
+}
+
+// ── 將 Float32Array 編碼為 WAV Blob ────────────────────────────────
+function float32ToWav(pcmL, pcmR, sampleRate) {
+  const numCh = 2, bitsPerSample = 16;
+  const numSamples = pcmL.length;
+  const bytesPerSample = bitsPerSample / 8;
+  const blockAlign = numCh * bytesPerSample;
+  const byteRate   = sampleRate * blockAlign;
+  const dataSize   = numSamples * blockAlign;
+  const buf  = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buf);
+  const wr   = (pos, val, n) => {
+    if (n === 4) view.setUint32(pos, val, true);
+    else if (n === 2) view.setUint16(pos, val, true);
+  };
+  // RIFF header
+  'RIFF'.split('').forEach((c, i) => view.setUint8(i, c.charCodeAt(0)));
+  wr(4, 36 + dataSize, 4);
+  'WAVEfmt '.split('').forEach((c, i) => view.setUint8(8 + i, c.charCodeAt(0)));
+  wr(16, 16, 4); wr(20, 1, 2); wr(22, numCh, 2); wr(24, sampleRate, 4);
+  wr(28, byteRate, 4); wr(32, blockAlign, 2); wr(34, bitsPerSample, 2);
+  'data'.split('').forEach((c, i) => view.setUint8(36 + i, c.charCodeAt(0)));
+  wr(40, dataSize, 4);
+  let offset = 44;
+  for (let i = 0; i < numSamples; i++) {
+    const s16 = (ch) => Math.max(-32768, Math.min(32767, Math.round(ch[i] * 32767)));
+    view.setInt16(offset, s16(pcmL), true); offset += 2;
+    view.setInt16(offset, s16(pcmR), true); offset += 2;
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
 async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
   outputContent = '';
   setProgress(0, '準備中...', true);
@@ -3548,8 +3990,92 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
 
     if (isCancelled) throw new Error('CANCELLED');
 
+    // ── UVR 人聲分離（可選，預設關閉）────────────────────────────
+    let uvrVocalBlob = null;
+    const uvrEnabled = document.getElementById('tog_uvr')?.checked;
+    if (uvrEnabled) {
+      try {
+        const uvrMargin = parseInt(document.getElementById('p_uvr_margin')?.value) || UVR_HOP * 4;
+        log('🎤 UVR 人聲分離啟動（Kim_Vocal_2）...', 'info');
+        setProgress(50, 'UVR 初始化中...', true);
+
+        // 讀取原始檔案 ArrayBuffer（44.1kHz 用，decodeAudio 之前）
+        const rawBuf = await file.arrayBuffer();
+        if (isCancelled) throw new Error('CANCELLED');
+
+        const { vocalL, vocalR } = await runUVR(rawBuf, uvrMargin);
+        log(`✓ UVR 人聲分離完成（${(vocalL.length / UVR_SR).toFixed(1)}s）`, 'ok');
+
+        // 建立 WAV Blob 供下載
+        uvrVocalBlob = float32ToWav(vocalL, vocalR, UVR_SR);
+
+        // 將人聲混為 mono Float32Array 取代 file 輸入
+        // 建立假 File 物件讓 decodeAudio 可解碼
+        // 方法：直接將人聲 mono 重取樣至 SR 並寫入 IDB 作為音訊來源
+        // 實作：把 vocal mono 直接用 OfflineAudioContext 降取樣，繞過 decodeAudio
+        const vocalMono = new Float32Array(vocalL.length);
+        for (let i = 0; i < vocalL.length; i++) vocalMono[i] = (vocalL[i] + vocalR[i]) * 0.5;
+
+        const targetLen  = Math.round(vocalMono.length * SR / UVR_SR);
+        const offCtx     = new OfflineAudioContext(1, targetLen, SR);
+        const srcBuf     = offCtx.createBuffer(1, vocalMono.length, UVR_SR);
+        srcBuf.copyToChannel(vocalMono, 0);
+        const src = offCtx.createBufferSource();
+        src.buffer = srcBuf;
+        src.connect(offCtx.destination);
+        src.start(0);
+        const resampled = await offCtx.startRendering();
+        const vocalAt16k = resampled.getChannelData(0).slice();
+
+        setProgress(57, '解碼音訊...', true);
+        // 直接使用人聲 16kHz mono，跳過 decodeAudio
+        const audio = vocalAt16k;
+        const monoSnapshot = null;
+        const totalSec = audio.length / SR;
+        log(`音訊（人聲）長度：${totalSec.toFixed(1)}s`, 'ok');
+
+        if (isCancelled) throw new Error('CANCELLED');
+
+        const language   = document.getElementById('language').value || undefined;
+        const task       = document.getElementById('task').value;
+        const promptText = document.getElementById('initialPrompt').value.trim() || null;
+        if (promptText) log(`💬 初始提示詞已啟用（${promptText.length} 字元）`, 'info');
+        let   CHUNK_SEC  = _dynamicChunkSec;
+        const STRIDE_SEC = 5;
+        const totalSamples = audio.length;
+        const totalAudSec  = totalSamples / SR;
+
+        _inferStart  = Date.now();
+        _inferredSec = 0;
+
+        // 儲存人聲 WAV 下載連結（推論完成後顯示）
+        window._uvrVocalBlob = uvrVocalBlob;
+
+        // 跳至推論（共用下方的 VAD/chunk 流程）
+        // 以 goto-label 模式：設定 audio 並 fall through
+        // 實作方式：用 _uvrAudio 旗標讓下方流程使用已處理的 audio
+        window._uvrAudio = audio;
+      } catch (uvrErr) {
+        if (uvrErr.message === 'CANCELLED') throw uvrErr;
+        log(`⚠ UVR 分離失敗（${uvrErr.message}），繼續使用原始音訊`, 'warn');
+        window._uvrAudio = null;
+        window._uvrVocalBlob = null;
+      }
+    } else {
+      window._uvrAudio = null;
+      window._uvrVocalBlob = null;
+    }
+
     setProgress(57, '解碼音訊...', true);
-    const { audio, monoSnapshot } = await decodeAudio(file);
+    // 若 UVR 成功，使用人聲 audio；否則走原始 decodeAudio
+    let audio, monoSnapshot;
+    if (window._uvrAudio) {
+      audio         = window._uvrAudio;
+      monoSnapshot  = null;
+      window._uvrAudio = null;
+    } else {
+      ({ audio, monoSnapshot } = await decodeAudio(file));
+    }
     const totalSec = (audio instanceof Float32Array ? audio.length : audio.totalSamples) / SR;
     log(`音訊解碼完成，長度：${totalSec.toFixed(1)}s`, 'ok');
 
@@ -3559,7 +4085,7 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
     const task       = document.getElementById('task').value;
     const promptText = document.getElementById('initialPrompt').value.trim() || null;
     if (promptText) log(`💬 初始提示詞已啟用（${promptText.length} 字元）`, 'info');
-    let   CHUNK_SEC  = _dynamicChunkSec;  // 動態調整，初始 30
+    let   CHUNK_SEC  = _dynamicChunkSec;
     const STRIDE_SEC = 5;
     const totalSamples = audio instanceof Float32Array ? audio.length : audio.totalSamples;
     const totalAudSec  = totalSamples / SR;
@@ -3878,6 +4404,12 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
       idbDeletePrefix(activeIdbCacheKey).catch(() => {});
       activeIdbCacheKey = null;
     }
+    // 辨識完成後終止 UVR Worker，立即釋放 ~100MB 記憶體（模型已存 IDB/資料夾，下次重建 ~5–10s）
+    if (_uvrWorker) {
+      _uvrWorker.terminate();
+      _uvrWorker     = null;
+      _uvrModelReady = false;
+    }
   }
 }
 
@@ -3908,10 +4440,15 @@ cancelBtn.addEventListener('click', () => {
     workerReady = false;
     pipe = null;
   }
-  // Diarization Worker 保留（已下載模型，重啟代價高）
-  // 若正在執行中，postMessage CANCEL 令其中止
+  // Diarization Worker 保留（模型 18MB，重啟代價中等）
   if (_diarizationWorker) {
     _diarizationWorker.postMessage({ type: 'CANCEL' });
+  }
+  // UVR Worker：立即終止釋放記憶體（模型存於 IDB/資料夾，下次重建 Session ~5–10s）
+  if (_uvrWorker) {
+    _uvrWorker.terminate();
+    _uvrWorker      = null;
+    _uvrModelReady  = false;
   }
 });
 
@@ -3942,6 +4479,14 @@ startBtn.addEventListener('click', async () => {
   });
   _editorChunks  = [];
   _editorOriginal = [];
+  // 重置 UVR 下載按鈕
+  const dlVocalBtn = document.getElementById('dlVocalBtn');
+  if (dlVocalBtn) {
+    if (dlVocalBtn.href?.startsWith('blob:')) URL.revokeObjectURL(dlVocalBtn.href);
+    dlVocalBtn.style.display = 'none';
+  }
+  window._uvrAudio = null;
+  window._uvrVocalBlob = null;
   logBox.innerHTML = '';
   logBox.classList.remove('show');
   resetEta();
@@ -4014,6 +4559,22 @@ startBtn.addEventListener('click', async () => {
           ...c, timestamp: Array.isArray(c.timestamp) ? [...c.timestamp] : [0, null],
         }));
         initEditor(result.chunks, result.ext);
+
+        // UVR 人聲下載按鈕
+        const dlVocalBtn = document.getElementById('dlVocalBtn');
+        if (dlVocalBtn) {
+          if (window._uvrVocalBlob) {
+            const prevUrl = dlVocalBtn.href;
+            if (prevUrl?.startsWith('blob:')) URL.revokeObjectURL(prevUrl);
+            const vocalName = (result.baseName ?? 'vocals') + '_vocals.wav';
+            dlVocalBtn.href     = URL.createObjectURL(window._uvrVocalBlob);
+            dlVocalBtn.download = vocalName;
+            dlVocalBtn.style.display = 'flex';
+            window._uvrVocalBlob = null;
+          } else {
+            dlVocalBtn.style.display = 'none';
+          }
+        }
 
         const btnSaveToFolder = document.getElementById('btnSaveToFolder');
         btnSaveToFolder.disabled = !outFolderHandle;
@@ -5054,7 +5615,7 @@ function updatePostBadge() {
 }
 
 function updateAudioEnhanceBadge() {
-  const toggles = ['tog_vad','tog_normalize'];
+  const toggles = ['tog_vad','tog_normalize','tog_uvr'];
   const count = toggles.filter(id => document.getElementById(id)?.checked).length;
   const badge = document.getElementById('audioEnhanceBadge');
   if (!badge) return;
@@ -5072,6 +5633,7 @@ const toggleParamMap = {
   tog_medical:      'dictEditor',
   tog_fuzzy:        'params_fuzzy',
   tog_vad:          'params_vad',
+  tog_uvr:          'params_uvr',
   tog_hallucination:'params_hallucination',
 };
 
@@ -5085,11 +5647,16 @@ const toggleParamMap = {
   });
 });
 
-['tog_vad','tog_normalize'].forEach(id => {
+['tog_vad','tog_normalize','tog_uvr'].forEach(id => {
   document.getElementById(id)?.addEventListener('change', () => {
-    if (toggleParamMap[id]) {
-      document.getElementById(toggleParamMap[id])?.classList.toggle('show',
-        document.getElementById(id).checked);
+    const paramEl = document.getElementById(toggleParamMap[id]);
+    if (paramEl) {
+      const checked = document.getElementById(id).checked;
+      if (paramEl.classList.contains('post-params')) {
+        paramEl.classList.toggle('show', checked);
+      } else {
+        paramEl.style.display = checked ? 'grid' : 'none';
+      }
     }
     updateAudioEnhanceBadge();
   });
