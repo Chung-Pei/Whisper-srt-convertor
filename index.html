@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whisper 離線字幕產生器 v15</title>
+<title>Whisper 離線字幕產生器 v16</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@400;600;800&display=swap">
 <!-- ★ 阻塞式主題初始化：偵測系統色調，inline style 優先級永遠高於 stylesheet -->
@@ -1291,7 +1291,7 @@
   <header>
     <div class="badge-offline">完全離線 · 無資料外傳</div>
     <h1>Whisper <span>離線</span><br>字幕產生器</h1>
-    <p class="subtitle">// v15 · Transformers.js 3.5.2 · Silero VAD · 逐字時間戳 · 注音聲學模糊匹配 · 斷點續傳 · 動態記憶體調適</p>
+    <p class="subtitle">// v16 · Transformers.js 3.5.2 · Silero VAD · 逐字時間戳 · 注音聲學模糊匹配 · 斷點續傳 · 動態記憶體調適 · Wake Lock 防休眠</p>
   </header>
 
   <div style="display:flex; justify-content:flex-end; margin-bottom:1rem;">
@@ -1722,6 +1722,54 @@ let batchQueue    = [];
 let batchIdSeq    = 0;
 let isCancelled   = false;
 let isRunning     = false;
+
+// ── Wake Lock：防止螢幕休眠造成辨識中斷 ──────────────────────────────
+let _wakeLock = null;
+let _wakeLockUnsupportedWarned = false; // 不支援時只警告一次
+
+async function acquireWakeLock() {
+  // 已持有 sentinel 時不重複 acquire，避免多重鎖洩漏
+  if (_wakeLock) return;
+
+  if (!('wakeLock' in navigator)) {
+    if (!_wakeLockUnsupportedWarned) {
+      log('ℹ️ 此瀏覽器不支援 Wake Lock，建議手動保持螢幕常亮', 'warn');
+      _wakeLockUnsupportedWarned = true;
+    }
+    return;
+  }
+  try {
+    _wakeLock = await navigator.wakeLock.request('screen');
+    log('🔒 螢幕常亮已啟用（Wake Lock）', 'ok');
+    // 系統強制釋放時（iOS 鎖定、低電量等）同步清除參照
+    _wakeLock.addEventListener('release', () => {
+      _wakeLock = null;
+    });
+  } catch (err) {
+    // 常見原因：iOS 鎖定中、低電量模式、非 Secure Context
+    _wakeLock = null;
+    log('⚠️ Wake Lock 取得失敗：' + err.message, 'warn');
+  }
+}
+
+async function releaseWakeLock() {
+  if (!_wakeLock) return;
+  const sentinel = _wakeLock;
+  _wakeLock = null; // 先清除參照，防止 visibilitychange 在 release 期間重入
+  try {
+    await sentinel.release();
+    log('🔓 螢幕常亮已關閉', 'info');
+  } catch (_) {
+    // sentinel 已被系統釋放，靜默略過
+  }
+}
+
+// iOS / 頁面從背景切回前景時自動重新 acquire（iOS 強制釋放 Wake Lock）
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible' && isRunning && !_wakeLock) {
+    await acquireWakeLock();
+  }
+});
 
 // ── 動態記憶體調適 ──────────────────────────────────────────────────
 let _dynamicChunkSec = 30;  // 預設 30 秒，記憶體壓力時自動縮減
@@ -4481,6 +4529,7 @@ startBtn.addEventListener('click', async () => {
   isCancelled = false;
   _dynamicChunkSec = 30; // 重設動態 chunk 大小
   startMemMonitor();
+  await acquireWakeLock(); // 🔒 啟用螢幕常亮，防止休眠中斷辨識
   startBtn.disabled = true;
   fileInput.disabled = true;
   dropZone.classList.add('disabled');
@@ -4514,6 +4563,8 @@ startBtn.addEventListener('click', async () => {
 
   let doneCount = 0, errorCount = 0, cancelledCount = 0;
   const results = [];
+
+  try { // ── try/finally 保障：任何例外都能釋放 Wake Lock 並還原 UI ──
 
   for (let idx = 0; idx < pendingItems.length; idx++) {
     if (isCancelled) {
@@ -4641,14 +4692,17 @@ startBtn.addEventListener('click', async () => {
     }
   }
 
-  isRunning = false;
-  startBtn.disabled = batchQueue.filter(i => i.status === 'pending').length === 0;
-  fileInput.disabled = false;
-  dropZone.classList.remove('disabled');
-  cancelBtn.classList.remove('show');
-  document.getElementById('spinner').classList.remove('show');
-  document.getElementById('btnTxt').textContent = '▶ 開始辨識';
-  setProgress(isCancelled ? 0 : 100, isCancelled ? '已取消' : '完成！', false);
+  } finally { // ── 無論正常完成、取消或例外，都確保釋放 Wake Lock 並還原 UI ──
+    isRunning = false;
+    await releaseWakeLock(); // 🔓 辨識結束，釋放螢幕常亮
+    startBtn.disabled = batchQueue.filter(i => i.status === 'pending').length === 0;
+    fileInput.disabled = false;
+    dropZone.classList.remove('disabled');
+    cancelBtn.classList.remove('show');
+    document.getElementById('spinner').classList.remove('show');
+    document.getElementById('btnTxt').textContent = '▶ 開始辨識';
+    setProgress(isCancelled ? 0 : 100, isCancelled ? '已取消' : '完成！', false);
+  }
 });
 
 updateModelFolderStatus();
