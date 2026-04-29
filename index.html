@@ -1803,6 +1803,17 @@ function stopMemMonitor() {
 
 // 【核心修復 1】：加入 await 以確保 Transformers.js 模型徹底釋放，防止 OOM
 const WORKER_CODE = `
+// ── 全域未捕獲錯誤攔截：防止 Worker 內部錯誤冒泡為 console Uncaught Error ──
+self.onerror = (msg, src, line, col, err) => {
+  self.postMessage({ type: 'ERROR', payload: (err && err.message) ? err.message : String(msg) });
+  return true; // 阻止錯誤繼續冒泡至主執行緒 window
+};
+self.addEventListener('unhandledrejection', (e) => {
+  const reason = e.reason;
+  self.postMessage({ type: 'ERROR', payload: (reason && reason.message) ? reason.message : String(reason) });
+  e.preventDefault();
+});
+
 const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@3.5.2/dist/transformers.min.js';
 
 let pipelineFn = null;
@@ -2072,6 +2083,11 @@ function createWorker() {
   // 注意：type:'module' 的 Blob URL Worker 在 Chrome/Safari 中不被允許
   inferenceWorker = new Worker(blobUrl);
   URL.revokeObjectURL(blobUrl);
+  // 主執行緒側攔截 Worker 未捕獲錯誤，轉為 UI log 而非 console Uncaught Error
+  inferenceWorker.onerror = (e) => {
+    e.preventDefault(); // 阻止冒泡至 window.onerror
+    log('⚠️ 辨識 Worker 錯誤：' + (e.message || '未知錯誤'), 'err');
+  };
   return inferenceWorker;
 }
 
@@ -2082,6 +2098,17 @@ function createWorker() {
 //  處理大型音訊：以 10s 滑動視窗分段處理後合併
 // ══════════════════════════════════════════════════════════════════════
 const DIARIZATION_WORKER_CODE = `
+// ── 全域未捕獲錯誤攔截 ──────────────────────────────────────────────
+self.onerror = (msg, src, line, col, err) => {
+  self.postMessage({ type: 'ERROR', error: (err && err.message) ? err.message : String(msg) });
+  return true;
+};
+self.addEventListener('unhandledrejection', (e) => {
+  const reason = e.reason;
+  self.postMessage({ type: 'ERROR', error: (reason && reason.message) ? reason.message : String(reason) });
+  e.preventDefault();
+});
+
 const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@3.5.2/dist/transformers.min.js';
 const MODEL_ID = 'onnx-community/pyannote-segmentation-3.0';
 const SAMPLE_RATE = 16000;
@@ -2193,6 +2220,11 @@ function getDiarizationWorker() {
   // Classic worker：dynamic import() 在現代瀏覽器的 classic blob worker 中完全支援
   _diarizationWorker = new Worker(blobUrl);
   URL.revokeObjectURL(blobUrl);
+  // 主執行緒側攔截 Diarization Worker 未捕獲錯誤
+  _diarizationWorker.onerror = (e) => {
+    e.preventDefault();
+    log('⚠️ 說話者分割 Worker 錯誤：' + (e.message || '未知錯誤'), 'err');
+  };
   return _diarizationWorker;
 }
 
@@ -3588,6 +3620,17 @@ let _uvrModelReady = false;
 // ── UVR Worker blob 程式碼 ──────────────────────────────────────────
 const UVR_WORKER_CODE = `
 'use strict';
+// ── 全域未捕獲錯誤攔截 ──────────────────────────────────────────────
+self.onerror = (msg, src, line, col, err) => {
+  self.postMessage({ type: 'ERROR', message: (err && err.message) ? err.message : String(msg) });
+  return true;
+};
+self.addEventListener('unhandledrejection', (e) => {
+  const reason = e.reason;
+  self.postMessage({ type: 'ERROR', message: (reason && reason.message) ? reason.message : String(reason) });
+  e.preventDefault();
+});
+
 // 載入 onnxruntime-web WASM 後端
 let ort = null;
 let session = null;
@@ -3595,8 +3638,13 @@ const ORT_CDN = '${ORT_WEB_CDN}';
 
 async function loadOrt() {
   if (ort) return;
-  importScripts(ORT_CDN + 'ort.min.js');
+  try {
+    importScripts(ORT_CDN + 'ort.min.js');
+  } catch (e) {
+    throw new Error('onnxruntime-web 載入失敗：' + e.message + '（CDN: ' + ORT_CDN + '）');
+  }
   ort = self.ort;
+  if (!ort) throw new Error('onnxruntime-web 載入後 self.ort 不存在，可能版本不符');
   ort.env.wasm.wasmPaths = ORT_CDN;
 }
 
@@ -3800,6 +3848,11 @@ function getUvrWorker() {
   const url  = URL.createObjectURL(blob);
   _uvrWorker = new Worker(url);
   URL.revokeObjectURL(url);
+  // 主執行緒側攔截 UVR Worker 未捕獲錯誤
+  _uvrWorker.onerror = (e) => {
+    e.preventDefault();
+    log('⚠️ 人聲分離 Worker 錯誤：' + (e.message || '未知錯誤'), 'err');
+  };
   return _uvrWorker;
 }
 
