@@ -1,16 +1,21 @@
 // sw.js — Whisper 離線字幕產生器 Service Worker
-// 版本號請在每次更新靜態資源後遞增
-const CACHE_VERSION = 'v1';
-const CACHE_NAME = `whisper-subtitler-${CACHE_VERSION}`;
+// CACHE_VERSION：每次更新 index.html 靜態資源後遞增（格式：YYYYMMDD-N）
+const CACHE_VERSION = '20260528-1';
+const CACHE_NAME    = `whisper-subtitler-${CACHE_VERSION}`;
 
-// App Shell：只快取 UI 骨架，不快取 Whisper 模型（模型由 App 自行透過 IndexedDB 管理）
+// App Shell：只快取 UI 骨架
+// BASE = '' 表示根目錄部署；子目錄部署請將 BASE 改為 '/your-subpath'
+// 根目錄部署（GitHub Pages root）
+const BASE = '';
+
 const APP_SHELL = [
-  '/Whisper-srt-convertor/',
-  '/Whisper-srt-convertor/index.html',
-  '/Whisper-srt-convertor/manifest.json',
-  '/Whisper-srt-convertor/icons/icon-192.png',
-  '/Whisper-srt-convertor/icons/icon-512.png',
-  '/Whisper-srt-convertor/icons/apple-touch-icon-180x180.png',
+  `${BASE}/`,
+  `${BASE}/index.html`,
+  `${BASE}/manifest.json`,
+  `${BASE}/icons/icon-180.png`,
+  `${BASE}/icons/icon-192.png`,
+  `${BASE}/icons/icon-512.png`,
+  `${BASE}/icons/apple-touch-icon-180x180.png`,
 ];
 
 // ── 安裝：快取 App Shell ──────────────────────────────────────────────────────
@@ -19,6 +24,11 @@ self.addEventListener('install', (event) => {
     caches.open(CACHE_NAME)
       .then((cache) => cache.addAll(APP_SHELL))
       .then(() => self.skipWaiting())
+      .catch((err) => {
+        // addAll 若有任一資源 404 即失敗；記錄後重拋讓 SW install 正確中止
+        console.error('[SW] install failed:', err);
+        throw err;
+      })
   );
 });
 
@@ -61,7 +71,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 其他請求：Network First
+  // 其他同源請求：Network First
   event.respondWith(networkFirst(request));
 });
 
@@ -69,8 +79,8 @@ self.addEventListener('fetch', (event) => {
 
 function isStaticAsset(pathname) {
   return (
-    pathname.startsWith('/Whisper-srt-convertor/icons/') ||
-    pathname === '/Whisper-srt-convertor/manifest.json' ||
+    pathname.startsWith(`${BASE}/icons/`) ||
+    pathname === `${BASE}/manifest.json` ||
     /\.(png|jpg|jpeg|svg|webp|ico|woff2?|ttf)$/.test(pathname)
   );
 }
@@ -82,7 +92,7 @@ async function cacheFirst(request) {
     const response = await fetch(request);
     if (response.ok) {
       const cache = await caches.open(CACHE_NAME);
-      cache.put(request, response.clone());
+      await cache.put(request, response.clone()); // BUG-3 fix: await
     }
     return response;
   } catch {
@@ -95,13 +105,17 @@ async function networkFirst(request) {
     const response = await fetch(request);
     if (response.ok) {
       const cache = await caches.open(CACHE_NAME);
-      cache.put(request, response.clone());
+      await cache.put(request, response.clone()); // BUG-3 fix: await
     }
     return response;
   } catch {
     const cached = await caches.match(request);
     if (cached) return cached;
-    return new Response('', { status: 503, statusText: 'Offline' });
+    // BUG-6 fix: 回傳可識別的離線錯誤頁，而非空白 503
+    return new Response(
+      JSON.stringify({ error: 'offline' }),
+      { status: 503, statusText: 'Offline', headers: { 'Content-Type': 'application/json' } }
+    );
   }
 }
 
@@ -110,19 +124,20 @@ async function navigationHandler(request) {
     const response = await fetch(request);
     if (response.ok) {
       const cache = await caches.open(CACHE_NAME);
-      cache.put(request, response.clone());
+      await cache.put(request, response.clone()); // BUG-3 fix: await
     }
     return response;
   } catch {
-    // 離線時回傳已快取的 index.html
+    // 離線時依序嘗試：精確路徑 → index.html → 根目錄 → 內建離線頁
     const cached =
       (await caches.match(request)) ||
-      (await caches.match('/Whisper-srt-convertor/index.html')) ||
-      (await caches.match('/Whisper-srt-convertor/'));
+      (await caches.match(`${BASE}/index.html`)) ||
+      (await caches.match(`${BASE}/`));
     if (cached) return cached;
-    return new Response('<h1>離線中</h1><p>請連線後重試。</p>', {
-      status: 200,
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
-    });
+    return new Response(
+      '<!DOCTYPE html><html lang="zh-TW"><head><meta charset="UTF-8"><title>離線中</title></head>' +
+      '<body style="font-family:sans-serif;padding:2rem"><h1>離線中</h1><p>請連線後重試。</p></body></html>',
+      { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+    );
   }
 }

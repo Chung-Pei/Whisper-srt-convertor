@@ -3,7 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whisper 離線字幕產生器 v16</title>
+<title>Whisper 離線字幕產生器 v19</title>
+<!-- PWA -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4f4f0" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="字幕產生器">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@400;600;800&display=swap">
 <!-- ★ 阻塞式主題初始化：偵測系統色調，inline style 優先級永遠高於 stylesheet -->
@@ -1300,15 +1309,14 @@
 
   <div class="section-title">語音模型</div>
   <div class="model-strip">
-    <button class="model-btn active" data-model="Xenova/whisper-tiny" data-warn="">tiny (~75MB)</button>
-    <button class="model-btn" data-model="Xenova/whisper-base" data-warn="">base (~145MB)</button>
+    <button class="model-btn active" data-model="Xenova/whisper-base" data-warn="">base (~145MB)</button>
     <button class="model-btn" data-model="Xenova/whisper-small" data-warn="">small (~460MB)</button>
     <button class="model-btn" data-model="Xenova/whisper-medium" data-warn="">medium (~1.5GB)</button>
     <button class="model-btn model-btn-turbo" data-model="onnx-community/whisper-large-v3-turbo" data-warn="ram">large-v3-turbo (~1.6GB) ⚡</button>
   </div>
 
   <div class="info-box" id="infoBox">
-    <strong>▸ tiny (~75MB)</strong> — 首次使用需下載模型，之後快取於本地。音訊僅在本機處理，不傳送任何資料。
+    <strong>▸ base (~145MB)</strong> — 首次使用需下載模型，之後快取於本地。音訊僅在本機處理，不傳送任何資料。
   </div>
 
   <div class="warn-box" id="ramWarn" style="display:none;">
@@ -1709,8 +1717,8 @@
 })();
 
 let selectedFile  = null;
-let selectedModel = 'Xenova/whisper-tiny';
-let pipe          = null;
+let selectedModel = 'Xenova/whisper-base';
+let loadedModel   = null;   // Worker 內已載入的模型 ID（null = 未載入）
 let outputContent = '';
 let modelFolderHandle = null;
 let outFolderHandle   = null;
@@ -1814,11 +1822,13 @@ self.addEventListener('unhandledrejection', (e) => {
   e.preventDefault();
 });
 
-const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@3.5.2/dist/transformers.min.js';
+const TRANSFORMERS_URL     = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0/dist/transformers.min.js';
+const TRANSFORMERS_URL_FB  = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@3.5.2/dist/transformers.min.js'; // v3 fallback
 
-let pipelineFn = null;
-let envRef     = null;
-let pipe       = null;
+let pipelineFn    = null;
+let ModelRegistry = null;   // v4 新增
+let envRef        = null;
+let pipe          = null;
 let modelFolderHandle = null;
 
 async function readFromModelFolder(relativePath) {
@@ -1910,20 +1920,57 @@ function installFolderFetchInterceptor() {
 
 async function loadLib() {
   if (pipelineFn) return;
+  let mod;
   try {
-    const mod  = await import(TRANSFORMERS_URL);
-    pipelineFn = mod.pipeline;
-    envRef     = mod.env;
-    envRef.allowLocalModels = false;
-    envRef.useBrowserCache  = true;  // v3 使用此設定
+    // 嘗試載入 v4（含 ModelRegistry、新 WebGPU runtime）
+    mod = await import(TRANSFORMERS_URL);
+    self.postMessage({ type: 'LIB_VERSION', payload: { version: '4.2.0' } });
   } catch (e) {
-    throw new Error("無法載入 Transformers.js。若是首次使用，請確保網路連線正常以便快取依賴庫；若已離線使用，可能是瀏覽器快取被清除。詳細錯誤: " + e.message);
+    // v4 載入失敗（離線快取只有 v3）→ 自動降級
+    try {
+      mod = await import(TRANSFORMERS_URL_FB);
+      self.postMessage({ type: 'LIB_VERSION', payload: { version: '3.5.2-fallback' } });
+    } catch (e2) {
+      throw new Error("無法載入 Transformers.js。若是首次使用，請確保網路連線正常以便快取依賴庫；若已離線使用，可能是瀏覽器快取被清除。詳細錯誤: " + e2.message);
+    }
+  }
+  pipelineFn    = mod.pipeline;
+  ModelRegistry = mod.ModelRegistry ?? null;  // v4 才有
+  envRef        = mod.env;
+  if (envRef) {
+    envRef.allowLocalModels = false;
+    envRef.useBrowserCache  = true;
   }
 }
 
+// ── 記憶體壓力偵測 ──────────────────────────────────────────────────────
+// performance.memory 僅 Chrome 支援（非標準 API）。
+// Firefox / Safari 不支援時回傳 0，使壓力訊號永不觸發。
+// 改用 navigator.storage.estimate() 作為跨瀏覽器補充：
+//   quota ≈ 可用磁碟/記憶體配額，usage ≈ 已使用量（粗略估算）
+// 兩者取較高值，確保 Chrome 精確值不被遮蓋。
+let _storageRatioCache = 0;
+let _storageRatioTs    = 0;
+
+async function refreshStorageRatio() {
+  // 每 5 秒更新一次，避免頻繁非同步呼叫
+  if (Date.now() - _storageRatioTs < 5000) return;
+  try {
+    const est = await navigator.storage?.estimate?.();
+    if (est?.quota && est.quota > 0) {
+      _storageRatioCache = est.usage / est.quota;
+      _storageRatioTs    = Date.now();
+    }
+  } catch (_) {}
+}
+
 function getMemoryUsageRatio() {
-  if (!performance?.memory) return 0;
-  return performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit;
+  // Chrome：使用精確 JS heap 數值
+  if (performance?.memory?.jsHeapSizeLimit > 0) {
+    return performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit;
+  }
+  // Firefox / Safari：回傳上次 storage estimate（非同步更新）
+  return _storageRatioCache;
 }
 
 let _chunkCounter = 0;
@@ -1993,6 +2040,9 @@ self.addEventListener('message', async (e) => {
         self.postMessage({ type: 'CHUNK_ERROR', payload: { error: '模型尚未載入（pipe is null）', segIdx: payload.segIdx } });
         return;
       }
+
+      // 非同步更新跨瀏覽器記憶體估算（不等待，下一輪 chunk 即可用到）
+      refreshStorageRatio().catch(() => {});
 
       const memRatio = getMemoryUsageRatio();
       if (memRatio > 0.85) {
@@ -2326,27 +2376,35 @@ function workerCall(worker, msgType, payload, resolveOn, timeoutMs = 300_000) {
 
 const FSA_SUPPORTED = ('showDirectoryPicker' in window);
 
+// Chrome：精確 JS heap 可用量；Firefox/Safari：storage.estimate 粗估，或保守預設 2GB
+// _storageQuotaMB 由頁面載入時非同步填充
+let _storageQuotaMB = 2048;
+navigator.storage?.estimate?.().then(est => {
+  if (est?.quota > 0) _storageQuotaMB = Math.round(est.quota / 1024 / 1024);
+}).catch(() => {});
+
 function getAvailableMemoryMB() {
-  if (performance?.memory) {
+  if (performance?.memory?.jsHeapSizeLimit > 0) {
     const total = performance.memory.jsHeapSizeLimit / 1024 / 1024;
     const used  = performance.memory.usedJSHeapSize  / 1024 / 1024;
     return Math.round(total - used);
   }
-  return 2048;
+  // Firefox / Safari：以 storage quota 的 60% 估算可用記憶體（保守值）
+  return Math.round(_storageQuotaMB * 0.6);
 }
 
 function isWebGPUSupported() { return typeof navigator !== 'undefined' && !!navigator.gpu; }
 
-// ── chooseDtype：依可用記憶體選擇最佳量化格式（v3 相容靜態邏輯）
+// ── chooseDtype：優先使用 ModelRegistry（v4）動態查詢，v3 退回靜態估算 ──
 const _dtypeCache = new Map();   // modelId → 已解析的 dtype string
 
 function _dtypeFallback(modelId) {
+  // 靜態備援：依可用記憶體估算（ModelRegistry 不可用時使用）
   const available = getAvailableMemoryMB();
   const sizeMap = {
-    'Xenova/whisper-tiny': 75, 'Xenova/whisper-base': 145, 'Xenova/whisper-small': 460,
+    'Xenova/whisper-base': 145, 'Xenova/whisper-small': 460,
     'Xenova/whisper-medium': 1500, 'onnx-community/whisper-large-v3-turbo': 1600,
-    'onnx-community/whisper-tiny': 75, 'onnx-community/whisper-base': 145,
-    'onnx-community/whisper-small': 460,
+    'onnx-community/whisper-base': 145, 'onnx-community/whisper-small': 460,
   };
   const modelMB = sizeMap[modelId] ?? 500;
   if (available < modelMB * 3) return 'q4';
@@ -2354,9 +2412,30 @@ function _dtypeFallback(modelId) {
   return 'fp32';
 }
 
+async function _dtypeViaRegistry(modelId) {
+  // 使用 ModelRegistry.get_available_dtypes() 查詢該模型實際支援的量化格式
+  // 依優先順序選擇最節省記憶體的可用格式
+  try {
+    if (!ModelRegistry) return null;
+    const available = getAvailableMemoryMB();
+    const dtypes = await ModelRegistry.get_available_dtypes(modelId);
+    if (!dtypes || dtypes.length === 0) return null;
+    // 記憶體充裕（>3GB）時允許 fp32；否則優先選輕量格式
+    const preferred = available > 3000
+      ? ['fp32', 'fp16', 'q8', 'q4']
+      : ['q4', 'q8', 'fp16', 'fp32'];
+    const chosen = preferred.find(d => dtypes.includes(d)) ?? dtypes[0];
+    log(`ModelRegistry dtype：${modelId} → ${chosen}（可用：${dtypes.join(', ')}）`, 'info');
+    return chosen;
+  } catch (_) {
+    return null; // 網路失敗或 v3 無此 API，靜默降級
+  }
+}
+
 async function chooseDtype(modelId) {
   if (_dtypeCache.has(modelId)) return _dtypeCache.get(modelId);
-  const dtype = _dtypeFallback(modelId);
+  // 優先 ModelRegistry（v4），失敗退回靜態估算（v3 / 離線）
+  const dtype = (await _dtypeViaRegistry(modelId)) ?? _dtypeFallback(modelId);
   log(`dtype：${modelId} → ${dtype}`, 'info');
   _dtypeCache.set(modelId, dtype);
   return dtype;
@@ -2762,7 +2841,7 @@ btnPickModelFolder.addEventListener('click', async () => {
   if (!FSA_SUPPORTED) return;
   try {
     modelFolderHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-    pipe = null;
+    loadedModel = null;
     await updateModelFolderStatus();
     log(`✓ 模型資料夾已設定為：${modelFolderHandle.name}`, 'ok');
   } catch (e) {
@@ -2772,7 +2851,7 @@ btnPickModelFolder.addEventListener('click', async () => {
 
 btnClearModelFolder.addEventListener('click', () => {
   modelFolderHandle = null;
-  pipe = null;
+  loadedModel = null;
   updateModelFolderStatus();
   log('已清除模型資料夾設定，改用 IndexedDB', 'warn');
 });
@@ -2829,7 +2908,7 @@ document.querySelectorAll('.model-btn').forEach(btn => {
       setTimeout(() => oldWorker.terminate(), 2000);
       inferenceWorker = null;
       workerReady = false;
-      pipe = null;
+      loadedModel = null;
       log(`模型切換：已釋放舊模型 ${selectedModel}`, 'warn');
     }
 
@@ -2860,6 +2939,8 @@ document.querySelectorAll('.model-btn').forEach(btn => {
     infoBox.appendChild(hint);
     document.getElementById('ramWarn').style.display = btn.dataset.warn === 'ram' ? 'block' : 'none';
     updateModelFolderStatus();
+    // dtype 快取清除，下次 chooseDtype 重新查詢新模型
+    _dtypeCache.delete(selectedModel);
   });
 });
 
@@ -3605,7 +3686,7 @@ function getOutputBasename(file) {
 const UVR_MODEL_NAME = 'Kim_Vocal_2.onnx';
 const UVR_MODEL_URL  = 'https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/Kim_Vocal_2.onnx';
 const UVR_IDB_KEY    = 'uvr:Kim_Vocal_2';
-const ORT_WEB_CDN    = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/';
+const ORT_WEB_CDN    = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/';
 
 // MDX-Net 參數（Kim_Vocal_2 固定值）
 const UVR_N_FFT    = 7680;
@@ -3929,7 +4010,7 @@ async function loadUvrModel(onProgress) {
   const response = await fetch(UVR_MODEL_URL);
   if (!response.ok) throw new Error(`UVR 模型下載失敗：${response.status}`);
   const contentLength = response.headers.get('content-length');
-  const total = contentLength ? parseInt(contentLength) : 63 * 1024 * 1024;
+  const total = contentLength ? parseInt(contentLength, 10) : 63 * 1024 * 1024;
   const reader = response.body.getReader();
   const chunks = [];
   let loaded = 0;
@@ -4063,7 +4144,7 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
     let worker = inferenceWorker ?? createWorker();
     inferenceWorker = worker;
 
-    if (!workerReady || pipe !== selectedModel) {
+    if (!workerReady || loadedModel !== selectedModel) {
       log(`載入模型：${selectedModel}（首次需下載）`, 'info');
       setProgress(0, '下載/載入模型...', true);
 
@@ -4091,13 +4172,19 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
             const backendStr = isGpu ? '⚡ WebGPU' : (x.backend === 'wasm-fallback' ? '⚠ WASM(GPU失敗)' : '⚪ WASM');
             hint.textContent = `⚙ 量化：${dtypeStr} ／ 後端：${backendStr}`;
           }
+        } else if (t === 'LIB_VERSION') {
+          // Worker 回報實際載入的 Transformers.js 版本
+          const ver = x.version ?? '';
+          const isFb = ver.includes('fallback');
+          log(`Transformers.js ${ver} ${isFb ? '（v3 降級模式）' : '✓'}`, isFb ? 'warn' : 'info');
         }
       };
       worker.addEventListener('message', progressHandler);
 
+      const loadingModelId = selectedModel;  // 捕捉此次載入的目標模型 ID
       try {
         await workerCall(worker, 'LOAD_MODEL', {
-          modelId: selectedModel,
+          modelId: loadingModelId,
           dtype,
           preferGpu,
           modelFolderHandle: modelFolderHandle ?? null
@@ -4105,8 +4192,8 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
       } finally {
         worker.removeEventListener('message', progressHandler);
       }
-      workerReady = true;
-      pipe = selectedModel;
+      workerReady  = true;
+      loadedModel  = loadingModelId;  // 記錄實際載入成功的模型 ID
       log(`模型載入完成 ✓`, 'ok');
     }
 
@@ -4322,7 +4409,7 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
         workerReady = false;
         await workerCall(worker, 'LOAD_MODEL', { modelId: selectedModel, dtype, preferGpu: isWebGPUSupported(), modelFolderHandle: modelFolderHandle ?? null }, 'MODEL_READY', 120000);
         workerReady = true;
-        pipe = selectedModel;
+        loadedModel = selectedModel;
 
         const retryBuf = segDataForRetry.buffer;
         if (retryBuf.byteLength === 0) {
@@ -4516,7 +4603,7 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
       inferenceWorker.terminate();
       inferenceWorker = null;
       workerReady = false;
-      pipe = null;
+      loadedModel = null;
     }
 
     return { success: false, error: e.message };
@@ -4560,7 +4647,7 @@ cancelBtn.addEventListener('click', () => {
     inferenceWorker.terminate();
     inferenceWorker = null;
     workerReady = false;
-    pipe = null;
+    loadedModel = null;
   }
   // Diarization Worker 保留（模型 18MB，重啟代價中等）
   if (_diarizationWorker) {
@@ -5862,7 +5949,7 @@ function renderDictTable() {
   // remove row
   tbody.querySelectorAll('.dict-rm-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      medicalDict.splice(parseInt(btn.dataset.idx), 1);
+      medicalDict.splice(parseInt(btn.dataset.idx, 10), 1);
       renderDictTable();
     });
   });
@@ -6041,6 +6128,28 @@ bindEditorEvents();
     }
   } catch(e) {}
 })();
+</script>
+
+<script>
+// ── Service Worker 註冊 ──────────────────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js', { scope: './' })
+      .then((reg) => {
+        console.info('[SW] 已註冊', reg.scope);
+        // 偵測新版本可用
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          newWorker?.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              console.info('[SW] 新版本已就緒，重新整理頁面以套用更新');
+            }
+          });
+        });
+      })
+      .catch((err) => console.warn('[SW] 註冊失敗：', err));
+  });
+}
 </script>
 </body>
 </html>
