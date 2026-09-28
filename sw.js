@@ -1,6 +1,6 @@
 // sw.js — Whisper 離線字幕產生器 Service Worker
 // CACHE_VERSION：每次更新 index.html 靜態資源後遞增（格式：YYYYMMDD-N）
-const CACHE_VERSION = '20260528-1';
+const CACHE_VERSION = '20260926-6';
 const CACHE_NAME    = `whisper-subtitler-${CACHE_VERSION}`;
 
 // App Shell：只快取 UI 骨架
@@ -8,12 +8,16 @@ const CACHE_NAME    = `whisper-subtitler-${CACHE_VERSION}`;
 // 根目錄部署（GitHub Pages root）
 const BASE = '';
 
+// ⚠ icons/ 清單必須與 manifest.json 的 icons[].src 及 index.html 的
+//   <link rel="apple-touch-icon">／<link rel="icon"> 三處完全一致（檔名、大小寫）。
+//   任一處 404 會讓 cache.addAll() 整體失敗、install 事件直接進入 redundant，
+//   導致離線功能完全無法使用（曾是實際發生過的部署失敗，非假設風險）。
 const APP_SHELL = [
   `${BASE}/`,
   `${BASE}/index.html`,
   `${BASE}/manifest.json`,
-  `${BASE}/icons/icon-180.png`,
   `${BASE}/icons/icon-192.png`,
+  `${BASE}/icons/icon-192-maskable.png`,
   `${BASE}/icons/icon-512.png`,
   `${BASE}/icons/apple-touch-icon-180x180.png`,
 ];

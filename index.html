@@ -3,7 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whisper 離線字幕產生器 v19</title>
+<title>Whisper 離線字幕產生器 v22.4</title>
+<meta name="description" content="在瀏覽器中使用 Whisper AI 模型進行離線語音辨識與字幕產生，完全不上傳至伺服器。">
+<meta property="og:title" content="Whisper 離線字幕產生器">
+<meta property="og:description" content="在瀏覽器中使用 Whisper AI 模型進行離線語音辨識與字幕產生，完全不上傳至伺服器。">
+<meta property="og:type" content="website">
 <!-- PWA -->
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)">
@@ -11,7 +15,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="字幕產生器">
-<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon-180x180.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@400;600;800&display=swap">
@@ -221,6 +225,12 @@
     border-color: var(--warn) !important;
     background: rgba(245,197,66,0.08) !important;
     color: var(--warn) !important;
+  }
+  .model-btn-exp { border-color: rgba(122,162,247,0.4); color: #7aa2f7; }
+  .model-btn-exp:hover, .model-btn-exp.active {
+    border-color: #7aa2f7 !important;
+    background: rgba(122,162,247,0.08) !important;
+    color: #7aa2f7 !important;
   }
 
   .info-box {
@@ -883,6 +893,89 @@
   }
   .batch-item-rm:hover { color: var(--err); }
 
+  .batch-item-preview-btn {
+    background: none;
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 0.68rem;
+    font-family: 'IBM Plex Mono', monospace;
+    padding: 2px 7px;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .batch-item-preview-btn:hover { border-color: var(--accent); background: rgba(0,229,160,0.08); }
+  .batch-item-preview-btn.open { background: rgba(0,229,160,0.12); border-color: var(--accent); }
+
+  .item-preview-panel {
+    padding: 0.9rem 1rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel2);
+  }
+  .preview-media-wrap {
+    position: relative;
+    width: 100%;
+    max-width: 480px;
+    margin: 0 auto 0.7rem;
+    background: #000;
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .preview-media-wrap.audio-mode {
+    background: var(--panel2);
+    aspect-ratio: 16/9;
+    display: flex;
+    align-items: flex-end;
+  }
+  .preview-media-wrap.audio-mode audio { position: absolute; left: 6px; right: 6px; bottom: 6px; width: calc(100% - 12px); }
+  .preview-media-wrap video, .preview-media-wrap audio { display: block; width: 100%; }
+  .preview-overlay {
+    position: absolute;
+    left: 4%;
+    right: 4%;
+    bottom: var(--preview-bottom-pct, 12%);
+    text-align: center;
+    color: #fff;
+    text-shadow: 0 0 3px #000, 0 0 6px #000, 0 1px 2px #000;
+    font-weight: 600;
+    line-height: 1.35;
+    pointer-events: none;
+    word-break: break-word;
+  }
+  /* audio-mode 背景為主題色 --panel2（淺色主題下接近白色），白字＋黑色 text-shadow 對比不足；
+     改用與 --panel2 搭配設計的 --text 主題色，深淺主題下皆保證足夠對比 */
+  .preview-media-wrap.audio-mode .preview-overlay {
+    color: var(--text);
+    text-shadow: none;
+    /* 位置滑桿拉到高值（貼近下緣）時，避免疊圖蓋住底部的原生 audio 控制列（約需 40px 高度的安全距離） */
+    bottom: max(var(--preview-bottom-pct, 12%), 44px);
+  }
+  .preview-slider-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.7rem;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--muted);
+    margin-bottom: 0.5rem;
+  }
+  .preview-slider-row label { flex-shrink: 0; min-width: 6.2em; }
+  .preview-slider-row input[type="range"] { flex: 1; accent-color: var(--accent); }
+  .preview-slider-row .preview-slider-val { flex-shrink: 0; min-width: 3em; text-align: right; color: var(--text); }
+  .preview-format-notice {
+    display: none;
+    background: rgba(245,197,66,0.08);
+    border: 1px solid rgba(245,197,66,0.3);
+    border-radius: var(--radius);
+    color: var(--warn);
+    font-size: 0.72rem;
+    padding: 0.45rem 0.6rem;
+    margin-top: 0.4rem;
+    line-height: 1.5;
+  }
+  .preview-format-notice.show { display: block; }
+
   .batch-summary {
     display: none;
     background: var(--panel);
@@ -1300,7 +1393,7 @@
   <header>
     <div class="badge-offline">完全離線 · 無資料外傳</div>
     <h1>Whisper <span>離線</span><br>字幕產生器</h1>
-    <p class="subtitle">// v19 · Transformers.js 4.2.0 · Silero VAD · 逐字時間戳 · 注音聲學模糊匹配 · 斷點續傳 · 動態記憶體調適 · Wake Lock 防休眠</p>
+    <p class="subtitle">// v22.4 · Transformers.js 4.3.0 · Silero VAD · 逐字時間戳 · 注音聲學模糊匹配 · 簡繁正規化 · 斷點續傳 · 動態記憶體調適 · Wake Lock 防休眠</p>
   </header>
 
   <div style="display:flex; justify-content:flex-end; margin-bottom:1rem;">
@@ -1313,6 +1406,7 @@
     <button class="model-btn" data-model="Xenova/whisper-small" data-warn="">small (~460MB)</button>
     <button class="model-btn" data-model="Xenova/whisper-medium" data-warn="">medium (~1.5GB)</button>
     <button class="model-btn model-btn-turbo" data-model="onnx-community/whisper-large-v3-turbo" data-warn="ram">large-v3-turbo (~1.6GB) ⚡</button>
+    <button class="model-btn model-btn-exp" data-model="striimit/whisper-large-v3-turbo-webgpu" data-warn="ram">large-v3-turbo WebGPU相容版 (~1.6GB) 🧪</button>
   </div>
 
   <div class="info-box" id="infoBox">
@@ -1321,7 +1415,7 @@
 
   <div class="warn-box" id="ramWarn" style="display:none;">
     ⚠ <strong>記憶體警告</strong><br>
-    large-v3-turbo 模型約 1.6GB，瀏覽器執行時需 <strong>3–4GB 可用 RAM</strong>。<br>
+    large-v3-turbo 系列模型約 1.6GB，瀏覽器執行時需 <strong>3–4GB 可用 RAM</strong>。<br>
     建議：64-bit Chrome／Edge、系統記憶體 ≥ 8GB。記憶體不足會導致頁面崩潰。<br>
     <span style="opacity:0.8;">ℹ 本工具已啟用<strong>自動量化</strong>（q8/q4），記憶體不足時自動壓縮模型至約 400–800MB。</span>
   </div>
@@ -1563,6 +1657,14 @@
 
       <div class="post-toggle-row">
         <div class="post-toggle-info">
+          <div class="post-toggle-name">簡繁正規化（cn→twp）</div>
+          <div class="post-toggle-desc">將簡體字轉換為台灣正體（含在地慣用詞），於醫學詞典比對前執行</div>
+        </div>
+        <label class="toggle-switch"><input type="checkbox" id="tog_opencc" checked><span class="toggle-slider"></span></label>
+      </div>
+
+      <div class="post-toggle-row">
+        <div class="post-toggle-info">
           <div class="post-toggle-name">醫學專有名詞標注</div>
           <div class="post-toggle-desc">辨識醫學術語並在後方加上 [英文對照]，可自訂詞典</div>
         </div>
@@ -1727,6 +1829,7 @@ let workerReady       = false;
 let activeIdbCacheKey = null;
 
 let batchQueue    = [];
+let _previewNoticeCleanups = [];  // 每次 renderBatchQueue() 重繪前，先清除舊面板遺留的 #outFormat change listener
 let batchIdSeq    = 0;
 let isCancelled   = false;
 let isRunning     = false;
@@ -1809,6 +1912,14 @@ function stopMemMonitor() {
   if (wrap) wrap.classList.remove('show');
 }
 
+// ── 第三方函式庫 CDN 版本（唯一真實來源）──
+// WORKER_CODE / DIARIZATION_WORKER_CODE 透過樣板字串插值引用同一份常數，避免各 Worker
+// 各自寫死版本號而不同步：修正前 @xenova/transformers@3.5.2 從未發布過（npm 最高僅 2.17.2），
+// 但主 worker 的 fallback 與 diarization worker 的唯一載入來源，各自獨立寫死了同一個不存在的版本號。
+const HF_TRANSFORMERS_VERSION = '4.3.0';
+const HF_TRANSFORMERS_URL     = `https://cdn.jsdelivr.net/npm/@huggingface/transformers@${HF_TRANSFORMERS_VERSION}/dist/transformers.min.js`;
+const HF_TRANSFORMERS_URL_FB  = `https://unpkg.com/@huggingface/transformers@${HF_TRANSFORMERS_VERSION}/dist/transformers.min.js`; // 不同 CDN 主機備援（jsdelivr → unpkg，同套件同版本，避免舊版 API 不相容）
+
 // 【核心修復 1】：加入 await 以確保 Transformers.js 模型徹底釋放，防止 OOM
 const WORKER_CODE = `
 // ── 全域未捕獲錯誤攔截：防止 Worker 內部錯誤冒泡為 console Uncaught Error ──
@@ -1822,8 +1933,8 @@ self.addEventListener('unhandledrejection', (e) => {
   e.preventDefault();
 });
 
-const TRANSFORMERS_URL     = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0/dist/transformers.min.js';
-const TRANSFORMERS_URL_FB  = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@3.5.2/dist/transformers.min.js'; // v3 fallback
+const TRANSFORMERS_URL     = '${HF_TRANSFORMERS_URL}';
+const TRANSFORMERS_URL_FB  = '${HF_TRANSFORMERS_URL_FB}';
 
 let pipelineFn    = null;
 let ModelRegistry = null;   // v4 新增
@@ -1922,14 +2033,14 @@ async function loadLib() {
   if (pipelineFn) return;
   let mod;
   try {
-    // 嘗試載入 v4（含 ModelRegistry、新 WebGPU runtime）
+    // 嘗試從主要 CDN（jsdelivr）載入
     mod = await import(TRANSFORMERS_URL);
-    self.postMessage({ type: 'LIB_VERSION', payload: { version: '4.2.0' } });
+    self.postMessage({ type: 'LIB_VERSION', payload: { version: '${HF_TRANSFORMERS_VERSION}' } });
   } catch (e) {
-    // v4 載入失敗（離線快取只有 v3）→ 自動降級
+    // 主要 CDN 載入失敗 → 改用備用 CDN（unpkg，同套件同版本）
     try {
       mod = await import(TRANSFORMERS_URL_FB);
-      self.postMessage({ type: 'LIB_VERSION', payload: { version: '3.5.2-fallback' } });
+      self.postMessage({ type: 'LIB_VERSION', payload: { version: '${HF_TRANSFORMERS_VERSION}-fallback' } });
     } catch (e2) {
       throw new Error("無法載入 Transformers.js。若是首次使用，請確保網路連線正常以便快取依賴庫；若已離線使用，可能是瀏覽器快取被清除。詳細錯誤: " + e2.message);
     }
@@ -1995,9 +2106,9 @@ self.addEventListener('message', async (e) => {
       const gpuAvailable = typeof navigator !== 'undefined' && !!navigator.gpu;
       let device, dtype;
 
-      // onnx-community/* 有分離的 encoder_model.onnx + decoder_model_merged.onnx，支援 per-module dtype
+      // onnx-community/* 與 striimit/* 皆有分離的 encoder_model.onnx + decoder_model_merged.onnx，支援 per-module dtype
       // Xenova/* 只有單一 model.onnx，必須使用純量 dtype 字串
-      const isOnnxCommunity = payload.modelId.startsWith('onnx-community/');
+      const isOnnxCommunity = payload.modelId.startsWith('onnx-community/') || payload.modelId.startsWith('striimit/');
 
       if (gpuAvailable && payload.preferGpu) {
         try {
@@ -2149,17 +2260,21 @@ function createWorker() {
 // ══════════════════════════════════════════════════════════════════════
 const DIARIZATION_WORKER_CODE = `
 // ── 全域未捕獲錯誤攔截 ──────────────────────────────────────────────
+// 欄位統一用 payload（與主 Whisper worker 一致）：原本此處誤用 error:，
+// 導致主執行緒 workerCall()/onDiarMsg() 用 e.data.payload 解析時收到 undefined，
+// 使用者只會看到「說話者分割失敗：undefined」而看不到真正錯誤內容。
 self.onerror = (msg, src, line, col, err) => {
-  self.postMessage({ type: 'ERROR', error: (err && err.message) ? err.message : String(msg) });
+  self.postMessage({ type: 'ERROR', payload: (err && err.message) ? err.message : String(msg) });
   return true;
 };
 self.addEventListener('unhandledrejection', (e) => {
   const reason = e.reason;
-  self.postMessage({ type: 'ERROR', error: (reason && reason.message) ? reason.message : String(reason) });
+  self.postMessage({ type: 'ERROR', payload: (reason && reason.message) ? reason.message : String(reason) });
   e.preventDefault();
 });
 
-const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@3.5.2/dist/transformers.min.js';
+const TRANSFORMERS_URL     = '${HF_TRANSFORMERS_URL}';
+const TRANSFORMERS_URL_FB  = '${HF_TRANSFORMERS_URL_FB}';
 const MODEL_ID = 'onnx-community/pyannote-segmentation-3.0';
 const SAMPLE_RATE = 16000;
 const CHUNK_SAMPLES = 10 * SAMPLE_RATE;   // 10s per chunk
@@ -2171,7 +2286,14 @@ let _cancelled = false;
 
 async function loadModels(progress_cb) {
   if (processor && model) return;
-  const { AutoProcessor, AutoModelForAudioFrameClassification, env } = await import(TRANSFORMERS_URL);
+  let mod;
+  try {
+    mod = await import(TRANSFORMERS_URL);
+  } catch (e) {
+    // 主要 CDN 載入失敗 → 改用備用 CDN（unpkg，同套件同版本）
+    mod = await import(TRANSFORMERS_URL_FB);
+  }
+  const { AutoProcessor, AutoModelForAudioFrameClassification, env } = mod;
   env.allowLocalModels = false;
   processor = await AutoProcessor.from_pretrained(MODEL_ID, { progress_callback: progress_cb });
   model     = await AutoModelForAudioFrameClassification.from_pretrained(MODEL_ID, { progress_callback: progress_cb });
@@ -2405,6 +2527,7 @@ function _dtypeFallback(modelId) {
     'Xenova/whisper-base': 145, 'Xenova/whisper-small': 460,
     'Xenova/whisper-medium': 1500, 'onnx-community/whisper-large-v3-turbo': 1600,
     'onnx-community/whisper-base': 145, 'onnx-community/whisper-small': 460,
+    'striimit/whisper-large-v3-turbo-webgpu': 1600,
   };
   const modelMB = sizeMap[modelId] ?? 500;
   if (available < modelMB * 3) return 'q4';
@@ -2461,15 +2584,13 @@ function fmtTime(sec) {
 let _editorChunks = [];   // 編輯器操作的 chunks 副本（與 outputContent 同步）
 let _editorFmt    = 'srt';
 
-/** 將秒數格式化為 SRT 時間戳（HH:MM:SS,mmm）*/
+/** 將秒數格式化為 SRT 時間戳（HH:MM:SS,mmm）
+ *  【修正】原本各自實作一套 round() 版本，與 fmtTime() 的 floor() 版本各自維護後產生分歧：
+ *  當小數毫秒四捨五入進位到 1000 時（如 12.9997 秒）會吐出格式損毀的 "00:00:12,1000"
+ *  （4 位數毫秒），且 displayToSec() 的正則式（\d{1,3}，最多 3 位）無法解析回去。
+ *  改為直接委派給 fmtTime()，維持唯一真實來源。 */
 function secToDisplay(sec) {
-  sec = Math.max(0, sec ?? 0);
-  const ms  = Math.round((sec % 1) * 1000);
-  const tot = Math.floor(sec);
-  const h   = Math.floor(tot / 3600);
-  const m   = Math.floor((tot % 3600) / 60);
-  const s   = tot % 60;
-  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')},${String(ms).padStart(3,'0')}`;
+  return fmtTime(sec ?? 0);
 }
 
 /** 將 HH:MM:SS,mmm 或 HH:MM:SS.mmm 解析為秒數 */
@@ -2518,6 +2639,7 @@ function buildEditorRow(chunk, idx) {
   delBtn.className = 'editor-del';
   delBtn.textContent = '✕';
   delBtn.title = '刪除此段落';
+  delBtn.setAttribute('aria-label', '刪除此段落');
   delBtn.addEventListener('click', () => {
     _editorChunks.splice(idx, 1);
     renderEditor();
@@ -2569,7 +2691,7 @@ function initEditor(chunks, fmt) {
 function applyEditorChanges() {
   const fmt2 = _editorFmt;
   let content;
-  if      (fmt2 === 'srt') content = chunksToSrt(_editorChunks);
+  if      (fmt2 === 'srt') content = _editorChunks.some(c => c._speaker != null) ? chunksToSrtWithSpeakers(_editorChunks) : chunksToSrt(_editorChunks);
   else if (fmt2 === 'vtt') content = chunksToVtt(_editorChunks);
   else if (fmt2 === 'ass') content = chunksToAss(_editorChunks);
   else if (fmt2 === 'txt') content = chunksToTxt(_editorChunks);
@@ -2618,12 +2740,20 @@ function bindEditorEvents() {
   });
 }
 
+/**
+ * 統一計算字幕結束時間：若無 end timestamp，退回 start+2 秒；
+ * 並確保 end 至少比 start 大 minGap（避免零/負長度字幕）。
+ * 單一函式集中維護，供所有匯出格式與 chunksToSubs 共用，避免各自維護導致公式跑掉。
+ */
+function resolveChunkEnd(c, minGap = 0.001) {
+  const rawEnd = c.timestamp[1] != null ? c.timestamp[1] : c.timestamp[0] + 2;
+  return Math.max(rawEnd, c.timestamp[0] + minGap);
+}
+
 function chunksToSrt(chunks) {
   return chunks.filter(c => c.timestamp && c.timestamp[0] != null).map((c, i) => {
       const start = fmtTime(c.timestamp[0]);
-      const rawEnd = c.timestamp[1] != null ? c.timestamp[1] : c.timestamp[0] + 2;
-      const endSec = Math.max(rawEnd, c.timestamp[0] + 0.001);
-      const end   = fmtTime(endSec);
+      const end   = fmtTime(resolveChunkEnd(c));
       return `${i+1}\n${start} --> ${end}\n${c.text.trim()}`;
     }).join('\n\n') + '\n';
 }
@@ -2639,13 +2769,13 @@ function fmtTimeVtt(sec) {
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
 }
 
-function chunksToVtt(chunks) {
+function chunksToVtt(chunks, opts) {
+  const linePct = opts && opts.linePct != null ? Math.round(opts.linePct) : null;
+  const lineSetting = linePct != null ? ` line:${linePct}%` : '';
   const cues = chunks.filter(c => c.timestamp && c.timestamp[0] != null).map((c, i) => {
     const start  = fmtTimeVtt(c.timestamp[0]);
-    const rawEnd = c.timestamp[1] != null ? c.timestamp[1] : c.timestamp[0] + 2;
-    const endSec = Math.max(rawEnd, c.timestamp[0] + 0.001);
-    const end    = fmtTimeVtt(endSec);
-    return `${i + 1}\n${start} --> ${end}\n${c.text.trim()}`;
+    const end    = fmtTimeVtt(resolveChunkEnd(c));
+    return `${i + 1}\n${start} --> ${end}${lineSetting}\n${c.text.trim()}`;
   });
   return 'WEBVTT\n\n' + cues.join('\n\n') + '\n';
 }
@@ -2661,9 +2791,7 @@ function chunksToMarkdown(chunks) {
   chunks.forEach((c) => {
     if (c.timestamp && c.timestamp[0] != null) {
       const start = fmtTime(c.timestamp[0]).replace(',', '.');
-      const rawEnd2 = c.timestamp[1] != null ? c.timestamp[1] : c.timestamp[0] + 2;
-      const endSec = Math.max(rawEnd2, c.timestamp[0] + 0.001);
-      const end   = fmtTime(endSec).replace(',', '.');
+      const end   = fmtTime(resolveChunkEnd(c)).replace(',', '.');
       lines.push(`**[${start} → ${end}]** ${c.text.trim()}\n`);
     } else {
       lines.push(c.text.trim() + '\n');
@@ -2672,7 +2800,7 @@ function chunksToMarkdown(chunks) {
   return lines.join('\n');
 }
 
-function chunksToAss(chunks) {
+function chunksToAss(chunks, opts) {
   // ASS/SSA v4+ format (SubStation Alpha) — compatible with Aegisub and most video players
   function fmtAss(sec) {
     sec = Math.max(0, sec);
@@ -2685,16 +2813,20 @@ function chunksToAss(chunks) {
     return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(cs).padStart(2,'0')}`;
   }
 
+  const PLAY_RES_Y = 720;
+  const fontsize = (opts && opts.fontsize != null) ? Math.round(opts.fontsize) : 48;
+  const marginV  = (opts && opts.bottomPct != null) ? Math.round(opts.bottomPct / 100 * PLAY_RES_Y) : 40;
+
   const header = `[Script Info]
 ScriptType: v4.00+
 PlayResX: 1280
-PlayResY: 720
+PlayResY: ${PLAY_RES_Y}
 ScaledBorderAndShadow: yes
 YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Noto Sans TC,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,80,80,40,1
+Style: Default,Noto Sans TC,${fontsize},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,80,80,${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`;
@@ -2703,8 +2835,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
     .filter(c => c.timestamp && c.timestamp[0] != null)
     .map(c => {
       const start  = fmtAss(c.timestamp[0]);
-      const rawEnd = c.timestamp[1] != null ? c.timestamp[1] : c.timestamp[0] + 2;
-      const end    = fmtAss(Math.max(rawEnd, c.timestamp[0] + 0.01));
+      const end    = fmtAss(resolveChunkEnd(c, 0.01));
       // Escape ASS special chars: { } \n in text
       const text   = c.text.trim()
         .replace(/\{/g, '\\{').replace(/\}/g, '\\}')
@@ -2917,13 +3048,13 @@ document.querySelectorAll('.model-btn').forEach(btn => {
     const infoBox = document.getElementById('infoBox');
     infoBox.textContent = '';
     const strong = document.createElement('strong');
-    strong.textContent = '▸ ' + btn.textContent.replace('⚡','').trim();
+    strong.textContent = '▸ ' + btn.textContent.replace('⚡','').replace('🧪','').trim();
     const textNode = document.createTextNode(' — 首次使用需下載模型，之後快取於本地。音訊僅在本機處理，不傳送任何資料。');
     const br = document.createElement('br');
     const hint = document.createElement('span');
     hint.style.cssText = 'color:var(--warn);font-size:0.72em;';
     // WebGPU 時顯示 per-module dtype 預期值；載入後 BACKEND message 更新為實際值
-    const isOnnxCommunity = selectedModel.startsWith('onnx-community/');
+    const isOnnxCommunity = selectedModel.startsWith('onnx-community/') || selectedModel.startsWith('striimit/');
     if (hasGpu) {
       const dtypeStr = isOnnxCommunity ? 'enc:fp16 / dec:q4' : 'fp32';
       hint.textContent = `⚙ 量化：${dtypeStr} ／ 後端：⚡ WebGPU（載入中更新）`;
@@ -2931,6 +3062,8 @@ document.querySelectorAll('.model-btn').forEach(btn => {
       hint.textContent = `⚙ 量化：查詢中… ／ 後端：⚪ WASM`;
       chooseDtype(selectedModel).then(dtype => {
         hint.textContent = `⚙ 量化：${dtype} ／ 後端：⚪ WASM`;
+      }).catch(() => {
+        hint.textContent = `⚙ 量化：查詢失敗（將於載入時使用預設值） ／ 後端：⚪ WASM`;
       });
     }
     infoBox.appendChild(strong);
@@ -2980,6 +3113,31 @@ async function loadJSZip() {
   });
   _jszip = window.JSZip;
   return _jszip;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  簡繁正規化（OpenCC 懶載入）— cn→twp（簡體轉台灣正體，含在地慣用詞）
+// ══════════════════════════════════════════════════════════════════════
+let _openccConverter = null;
+async function loadOpenCC() {
+  if (_openccConverter) return _openccConverter;
+  if (!window.OpenCC) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = OPENCC_CDN;
+      s.onload  = resolve;
+      s.onerror = () => reject(new Error('OpenCC 載入失敗'));
+      document.head.appendChild(s);
+    });
+  }
+  _openccConverter = window.OpenCC.Converter({ from: 'cn', to: 'twp' });
+  return _openccConverter;
+}
+
+/** 簡繁正規化：逐筆改寫 subs[i].text（cn→twp），簽名與 applyMedicalDict(subs) 一致 */
+async function applyOpenCC(subs) {
+  const converter = await loadOpenCC();
+  return subs.map(s => ({ ...s, text: converter(s.text) }));
 }
 
 async function downloadAllAsZip() {
@@ -3036,6 +3194,9 @@ function removeFromBatch(id) {
   if (item?.dlUrl) {
     URL.revokeObjectURL(item.dlUrl);
   }
+  if (item?.previewUrl) {
+    URL.revokeObjectURL(item.previewUrl);
+  }
   batchQueue = batchQueue.filter(item => item.id !== id);
   if (batchQueue.length === 0) selectedFile = null;
   renderBatchQueue();
@@ -3052,6 +3213,8 @@ function escapeHtml(str) {
 }
 
 function renderBatchQueue() {
+  _previewNoticeCleanups.forEach(fn => fn());
+  _previewNoticeCleanups = [];
   batchListEl.innerHTML = '';
   if (batchQueue.length === 0) {
     batchQueueEl.classList.remove('show');
@@ -3076,19 +3239,195 @@ function renderBatchQueue() {
            style="color:var(--accent);font-size:0.8rem;text-decoration:none;flex-shrink:0;">⬇</a>`
       : '<span style="width:20px"></span>';
 
+    const canPreview = item.status === 'done' && item.chunks && item.chunks.length > 0;
+    const previewBtn = canPreview
+      ? `<button class="batch-item-preview-btn${item.previewOpen ? ' open' : ''}" data-id="${item.id}" title="預覽字幕">👁 預覽</button>`
+      : '';
+
     el.innerHTML = `
       <span class="batch-item-icon">${icons[item.status] || '⏳'}</span>
       <span class="batch-item-name" title="${escapeHtml(item.file.name)}">${escapeHtml(item.file.name)}</span>
       <span class="batch-item-size">${formatSize(item.file.size)}</span>
       <span class="batch-item-status ${statusClass}">${statusLabels[item.status] || '等待中'}</span>
-      ${item.status === 'pending' ? `<button class="batch-item-rm" data-id="${item.id}" title="移除">✕</button>` : dlAnchor}
+      ${previewBtn}
+      ${item.status === 'pending' ? `<button class="batch-item-rm" data-id="${item.id}" title="移除" aria-label="移除">✕</button>` : dlAnchor}
     `;
     batchListEl.appendChild(el);
+
+    if (canPreview && item.previewOpen) {
+      const panel = buildPreviewPanel(item);
+      batchListEl.appendChild(panel);
+      bindPreviewPanelEvents(item, panel);
+    }
   });
 
   batchListEl.querySelectorAll('.batch-item-rm').forEach(btn => {
     btn.addEventListener('click', () => removeFromBatch(Number(btn.dataset.id)));
   });
+  batchListEl.querySelectorAll('.batch-item-preview-btn').forEach(btn => {
+    btn.addEventListener('click', () => togglePreviewPanel(Number(btn.dataset.id)));
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  字幕即時預覽面板 — accordion 展開於結果列表項目下方
+// ══════════════════════════════════════════════════════════════════════
+const PREVIEW_DEFAULT_FONTSIZE = 24;   // px，範圍 12–48
+const PREVIEW_DEFAULT_POS      = 88;   // %，範圍 0–100（值越大越貼近畫面下緣，見 getPreviewBottomPct）
+
+/** 滑桿值（0–100，值越大越貼近下緣）→ CSS bottom 百分比 */
+function getPreviewBottomPct(posValue) { return 100 - posValue; }
+
+function getPreviewFormatNotice(fmt) {
+  const names = { srt: 'SRT', vtt: 'WebVTT', ass: 'ASS', txt: '純文字 TXT', md: 'Markdown' };
+  const label = names[fmt] || String(fmt).toUpperCase();
+  if (fmt === 'ass') return { show: false, text: '' };
+  if (fmt === 'vtt') return { show: true, text: `⚠ 目前匯出格式為 ${label}，僅垂直位置會寫入匯出檔案，字級調整僅供預覽。` };
+  return { show: true, text: `⚠ 目前匯出格式為 ${label}，不支援樣式資訊，字級與位置調整僅供預覽，不會寫入匯出檔案。` };
+}
+
+function togglePreviewPanel(id) {
+  const item = batchQueue.find(i => i.id === id);
+  if (!item) return;
+  item.previewOpen = !item.previewOpen;
+  if (item.previewOpen) {
+    if (item.previewFontSize == null) item.previewFontSize = PREVIEW_DEFAULT_FONTSIZE;
+    if (item.previewPos == null)      item.previewPos      = PREVIEW_DEFAULT_POS;
+    if (!item.previewUrl) item.previewUrl = URL.createObjectURL(item.file);
+  } else if (item.previewUrl) {
+    URL.revokeObjectURL(item.previewUrl);
+    item.previewUrl = null;
+  }
+  renderBatchQueue();
+}
+
+/** 依播放時間 t 找出對應字幕文字。chunks 恆依時間排序（Whisper 原生輸出＋所有後處理轉換函式皆保序），
+ *  故以二分搜尋取代線性掃描：timeupdate 頻繁觸發，避免每次都從頭掃過整份逐字稿。 */
+function findActiveChunkText(chunks, t) {
+  let lo = 0, hi = chunks.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const c = chunks[mid];
+    const start = c.timestamp ? c.timestamp[0] : null;
+    if (start == null) { hi = mid - 1; continue; } // 防禦：理論上每個 chunk 皆保證含時間戳
+    const end = c.timestamp[1] != null ? c.timestamp[1] : start + 2;
+    if (t < start) hi = mid - 1;
+    else if (t > end) lo = mid + 1;
+    else return (c.text || '').trim();
+  }
+  return '';
+}
+
+function buildPreviewPanel(item) {
+  const panel = document.createElement('div');
+  panel.className = 'item-preview-panel';
+  panel.dataset.id = item.id;
+
+  const isVideo = /^video\//.test(item.file.type || '') || /\.(mp4|mov|webm|mkv|m4v|avi)$/i.test(item.file.name || '');
+  const mediaTag = isVideo
+    ? `<video class="preview-media-el" src="${escapeHtml(item.previewUrl)}" controls playsinline></video>`
+    : `<audio class="preview-media-el" src="${escapeHtml(item.previewUrl)}" controls></audio>`;
+
+  panel.innerHTML = `
+    <div class="preview-media-wrap${isVideo ? '' : ' audio-mode'}">
+      ${mediaTag}
+      <div class="preview-overlay"></div>
+    </div>
+    <div class="preview-slider-row">
+      <label>字級</label>
+      <input type="range" class="preview-fontsize-slider" min="12" max="48" step="1" value="${item.previewFontSize}">
+      <span class="preview-slider-val preview-fontsize-val">${item.previewFontSize}px</span>
+    </div>
+    <div class="preview-slider-row">
+      <label>垂直位置</label>
+      <input type="range" class="preview-pos-slider" min="0" max="100" step="1" value="${item.previewPos}">
+      <span class="preview-slider-val preview-pos-val">${item.previewPos}%</span>
+    </div>
+    <div class="preview-format-notice"></div>
+  `;
+  return panel;
+}
+
+function updatePreviewOverlayStyle(item, overlayEl) {
+  if (!overlayEl) return;
+  overlayEl.style.fontSize = item.previewFontSize + 'px';
+  overlayEl.style.setProperty('--preview-bottom-pct', getPreviewBottomPct(item.previewPos) + '%');
+}
+
+function updatePreviewNotice(noticeEl) {
+  if (!noticeEl) return;
+  const fmt = document.getElementById('outFormat').value;
+  const { show, text } = getPreviewFormatNotice(fmt);
+  noticeEl.textContent = text;
+  noticeEl.classList.toggle('show', show);
+}
+
+function bindPreviewPanelEvents(item, panel) {
+  const mediaEl   = panel.querySelector('.preview-media-el');
+  const overlayEl = panel.querySelector('.preview-overlay');
+  const noticeEl  = panel.querySelector('.preview-format-notice');
+  const fsSlider  = panel.querySelector('.preview-fontsize-slider');
+  const fsVal     = panel.querySelector('.preview-fontsize-val');
+  const posSlider = panel.querySelector('.preview-pos-slider');
+  const posVal    = panel.querySelector('.preview-pos-val');
+
+  updatePreviewOverlayStyle(item, overlayEl);
+  updatePreviewNotice(noticeEl);
+
+  mediaEl.addEventListener('timeupdate', () => {
+    overlayEl.textContent = findActiveChunkText(item.chunks, mediaEl.currentTime);
+  });
+
+  fsSlider.addEventListener('input', () => {
+    item.previewFontSize = parseInt(fsSlider.value, 10);
+    fsVal.textContent = item.previewFontSize + 'px';
+    updatePreviewOverlayStyle(item, overlayEl);
+  });
+  fsSlider.addEventListener('change', () => regenerateItemOutput(item));
+
+  posSlider.addEventListener('input', () => {
+    item.previewPos = parseInt(posSlider.value, 10);
+    posVal.textContent = item.previewPos + '%';
+    updatePreviewOverlayStyle(item, overlayEl);
+  });
+  posSlider.addEventListener('change', () => regenerateItemOutput(item));
+
+  const outFormatEl = document.getElementById('outFormat');
+  const noticeHandler = () => updatePreviewNotice(noticeEl);
+  outFormatEl.addEventListener('change', noticeHandler);
+  // 面板於下次 renderBatchQueue() 重繪時會被整體清除；集中登錄以便重繪前先移除，避免 listener 疊加
+  _previewNoticeCleanups.push(() => outFormatEl.removeEventListener('change', noticeHandler));
+}
+
+/** 依目前滑桿設定與 #outFormat 重新產生該項目的匯出內容（所見即所得），僅在 ASS/VTT 時樣式生效 */
+function regenerateItemOutput(item) {
+  if (!item.chunks || item.savedToFolder) return; // 已寫入資料夾模式不支援即時重新匯出
+  const fmt = document.getElementById('outFormat').value;
+  // srt/txt/md 不支援任何樣式資訊（見格式限制提示），滑桿調整對其輸出內容無影響，
+  // 故不應重新產生：除了徒耗運算，SRT 一旦重新產生還會改用不含說話者標籤的 chunksToSrt，
+  // 使原本 chunksToSrtWithSpeakers（開啟說話者分割時）產生的標籤消失——維持原始匯出內容即可。
+  let content;
+  if (fmt === 'ass') {
+    content = chunksToAss(item.chunks, { fontsize: item.previewFontSize, bottomPct: getPreviewBottomPct(item.previewPos) });
+  } else if (fmt === 'vtt') {
+    content = chunksToVtt(item.chunks, { linePct: item.previewPos });
+  } else {
+    return;
+  }
+  if (item.dlUrl) URL.revokeObjectURL(item.dlUrl);
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  item.dlUrl = URL.createObjectURL(blob);
+  const anchor = batchListEl.querySelector(`.batch-item[data-id="${item.id}"] a`);
+  if (anchor) anchor.href = item.dlUrl;
+
+  // 單檔模式：resultCard 的 #dlBtn 是使用者實際會點的下載按鈕，同步更新以維持所見即所得
+  if (batchQueue.length === 1) {
+    const dlBtn = document.getElementById('dlBtn');
+    if (dlBtn && dlBtn.href && dlBtn.href.startsWith('blob:')) {
+      URL.revokeObjectURL(dlBtn.href);
+      dlBtn.href = item.dlUrl;
+    }
+  }
 }
 
 function setBatchItemStatus(id, status) {
@@ -3114,9 +3453,10 @@ dropZone.addEventListener('drop', e => {
 
 const SR             = 16000;                    // 目標取樣率 (Hz)
 const IDB_NAME       = 'whisper-audio-cache';
-const IDB_STORE      = 'shards';
+const IDB_STORE      = 'shards';       // 暫存：目前處理中檔案的音訊分片，每次頁面載入即清空
 const IDB_TASK_STORE = 'task_state';
-const IDB_VERSION    = 2;
+const IDB_MODEL_STORE = 'models';      // 持久保存：UVR 等已下載模型的快取，需跨 session 保留，故與 shards 分開
+const IDB_VERSION    = 3;
 const LARGE_FILE_THRESHOLD = 50 * 1024 * 1024;
 const SHARD_SAMPLES        = 10 * SR * 60;       // IDB 每片大小 (10 分鐘 @ 16kHz)
 const MAX_DIAR_SAMPLES     = 10 * SR * 60;       // Diarization 快照上限 (10 分鐘)
@@ -3128,8 +3468,9 @@ function openIDB() {
     const req = indexedDB.open(IDB_NAME, IDB_VERSION);
     req.onupgradeneeded = (e) => {
       const db = e.target.result;
-      if (!db.objectStoreNames.contains(IDB_STORE))      db.createObjectStore(IDB_STORE);
-      if (!db.objectStoreNames.contains(IDB_TASK_STORE)) db.createObjectStore(IDB_TASK_STORE);
+      if (!db.objectStoreNames.contains(IDB_STORE))       db.createObjectStore(IDB_STORE);
+      if (!db.objectStoreNames.contains(IDB_TASK_STORE))  db.createObjectStore(IDB_TASK_STORE);
+      if (!db.objectStoreNames.contains(IDB_MODEL_STORE)) db.createObjectStore(IDB_MODEL_STORE);
     };
     req.onsuccess = (e) => {
       _idb = e.target.result;
@@ -3404,9 +3745,10 @@ function applyPeakNormalization(samples) {
 //  首次使用需連網下載 ~2MB；之後由 modelFolderHandle 資料夾優先讀取
 // ══════════════════════════════════════════════════════════════════════
 
-const VAD_WEB_CDN   = 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.30/dist/';
-const ONNX_WASM_CDN = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/';
-const JSZIP_CDN     = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
+const VAD_WEB_CDN   = 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.31/dist/';
+const ONNX_WASM_CDN = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/';
+const JSZIP_CDN     = 'https://cdn.jsdelivr.net/npm/jszip@3.10.2/dist/jszip.min.js';
+const OPENCC_CDN     = 'https://cdn.jsdelivr.net/npm/opencc-js@1.4.2/dist/umd/cn2t.js';
 
 let _vadInstance = null;
 let _vadLoading  = false;
@@ -3481,6 +3823,20 @@ async function getVadInstance() {
  * 主 VAD 入口：優先使用 Silero，失敗時降級 RMS
  * 回傳 [{start, end}]（秒）
  */
+/** 合併間距 < gapThreshold 秒的相鄰語音段。
+ *  原本 runVAD（Silero）與 runVAD_rms（RMS 備援）各自維護一份幾乎相同的合併迴圈，
+ *  靠註解提醒「需與 RMS 版本行為一致」——正是典型的複製貼上邏輯，一旦其中一份被
+ *  修改而忘了同步另一份就會產生分歧。抽成共用函式，兩處呼叫同一份實作。 */
+function mergeCloseSegments(segments, gapThreshold = 0.3) {
+  const merged = [];
+  for (const seg of segments) {
+    if (merged.length && seg.start - merged[merged.length - 1].end < gapThreshold)
+      merged[merged.length - 1].end = seg.end;
+    else merged.push({ ...seg });
+  }
+  return merged;
+}
+
 async function runVAD(samples, sampleRate = SR, threshold = 0.02) {
   const vadInst = await getVadInstance();
   if (vadInst) {
@@ -3489,14 +3845,7 @@ async function runVAD(samples, sampleRate = SR, threshold = 0.02) {
       for await (const { start, end } of vadInst.run(samples, sampleRate)) {
         segments.push({ start: start / 1000, end: end / 1000 }); // ms → sec
       }
-      // 合併間距 < 0.3s 的相鄰段（與 RMS 版本行為一致）
-      const merged = [];
-      for (const seg of segments) {
-        if (merged.length && seg.start - merged[merged.length - 1].end < 0.3)
-          merged[merged.length - 1].end = seg.end;
-        else merged.push({ ...seg });
-      }
-      return merged;
+      return mergeCloseSegments(segments);
     } catch (e) {
       log(`⚠ Silero VAD 執行失敗（${e.message}），降級 RMS`, 'warn');
     }
@@ -3527,12 +3876,7 @@ function runVAD_rms(samples, sampleRate = SR, threshold = 0.02) {
     else if (!isSpeech[f] && inSpeech) { segments.push({ start: segStart, end: Math.min(numFrames - 1, f + PAD_FRAMES) * HOP_SIZE / sampleRate }); inSpeech = false; }
   }
   if (inSpeech) segments.push({ start: segStart, end: samples.length / sampleRate });
-  const merged = [];
-  for (const seg of segments) {
-    if (merged.length && seg.start - merged[merged.length - 1].end < 0.3) merged[merged.length - 1].end = seg.end;
-    else merged.push({ ...seg });
-  }
-  return merged;
+  return mergeCloseSegments(segments);
 }
 async function* audioChunkGenerator(audioOrDesc, sampleRate = SR, chunkSec = 30, strideSec = 5) {
   const chunkLen  = chunkSec  * sampleRate;
@@ -3686,7 +4030,7 @@ function getOutputBasename(file) {
 const UVR_MODEL_NAME = 'Kim_Vocal_2.onnx';
 const UVR_MODEL_URL  = 'https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/Kim_Vocal_2.onnx';
 const UVR_IDB_KEY    = 'uvr:Kim_Vocal_2';
-const ORT_WEB_CDN    = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/';
+const ORT_WEB_CDN    = ONNX_WASM_CDN; // 沿用同一份 onnxruntime-web CDN 常數，避免與 VAD 模組各自維護版本號
 
 // MDX-Net 參數（Kim_Vocal_2 固定值）
 const UVR_N_FFT    = 7680;
@@ -3962,8 +4306,8 @@ async function readUvrModelFromFolder(folderHandle) {
 async function readUvrModelFromIDB() {
   try {
     const db  = await openIDB();
-    const tx  = db.transaction(IDB_STORE, 'readonly');
-    const req = tx.objectStore(IDB_STORE).get(UVR_IDB_KEY);
+    const tx  = db.transaction(IDB_MODEL_STORE, 'readonly');
+    const req = tx.objectStore(IDB_MODEL_STORE).get(UVR_IDB_KEY);
     return await new Promise((res, rej) => {
       req.onsuccess = () => res(req.result ? req.result.buffer : null);
       req.onerror   = () => res(null);
@@ -3975,8 +4319,8 @@ async function readUvrModelFromIDB() {
 async function saveUvrModelToIDB(buffer) {
   try {
     const db = await openIDB();
-    const tx = db.transaction(IDB_STORE, 'readwrite');
-    tx.objectStore(IDB_STORE).put({ buffer }, UVR_IDB_KEY);
+    const tx = db.transaction(IDB_MODEL_STORE, 'readwrite');
+    tx.objectStore(IDB_MODEL_STORE).put({ buffer }, UVR_IDB_KEY);
     await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
   } catch (e) { console.warn('UVR IDB 儲存失敗', e); }
 }
@@ -4176,7 +4520,7 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
           // Worker 回報實際載入的 Transformers.js 版本
           const ver = x.version ?? '';
           const isFb = ver.includes('fallback');
-          log(`Transformers.js ${ver} ${isFb ? '（v3 降級模式）' : '✓'}`, isFb ? 'warn' : 'info');
+          log(`Transformers.js ${ver} ${isFb ? '（備用 CDN 載入）' : '✓'}`, isFb ? 'warn' : 'info');
         }
       };
       worker.addEventListener('message', progressHandler);
@@ -4550,7 +4894,7 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
     const rawChunks = allChunks.filter((c, idx, arr) => idx === 0 || c.text.trim() !== arr[idx - 1].text.trim());
     // 套用說話者標籤（在後處理前，以保留 _speaker 屬性）
     const labelledChunks = diarSegments ? applyDiarizationToChunks(rawChunks, diarSegments) : rawChunks;
-    const chunks = applyPostProcessing(labelledChunks);
+    const chunks = await applyPostProcessing(labelledChunks);
     const postCount = Object.values(getPostConfig()).filter(v => v === true).length;
     if (postCount > 0) log(`✓ 後處理套用（${postCount} 項）`, 'ok');
     const fmt2 = document.getElementById('outFormat').value;
@@ -4608,7 +4952,6 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
 
     return { success: false, error: e.message };
   } finally {
-    stopMemMonitor();
     if (activeIdbCacheKey) {
       idbDeletePrefix(activeIdbCacheKey).catch(() => {});
       activeIdbCacheKey = null;
@@ -4662,6 +5005,8 @@ cancelBtn.addEventListener('click', () => {
 });
 
 startBtn.addEventListener('click', async () => {
+  if (isRunning) return; // 防止快速連點/重複觸發在 await acquireWakeLock() 期間重入，
+                          // 導致同一批次被兩個併行迴圈同時處理（worker 互踩、記憶體監控計時器洩漏）
   const pendingItems = batchQueue.filter(item => item.status === 'pending');
   if (pendingItems.length === 0) return;
 
@@ -4748,6 +5093,12 @@ startBtn.addEventListener('click', async () => {
       cancelledCount += pendingItems.length - idx - 1;
       break;
     } else if (result.success) {
+      // 統一先儲存後處理完成的 chunks（含 applyOpenCC 等後處理結果），供結果列表「預覽」面板使用；
+      // 須在 setBatchItemStatus() 觸發的重繪之前完成賦值，否則該次重繪會缺少 chunks 而不顯示預覽按鈕
+      {
+        const qItemForPreview = batchQueue.find(qi => qi.id === item.id);
+        if (qItemForPreview) qItemForPreview.chunks = result.chunks;
+      }
       setBatchItemStatus(item.id, 'done');
       doneCount++;
       results.push({ file: item.file, ...result });
@@ -4812,6 +5163,12 @@ startBtn.addEventListener('click', async () => {
     }
   }
 
+  // 迴圈中每個項目的 dlUrl／savedToFolder 賦值皆發生在該項目自身觸發的重繪之後，
+  // 對前 N-1 項而言，下一項的 setBatchItemStatus() 重繪會順帶反映出來，但最後一項
+  // 沒有「下一項」可以觸發後續重繪 —— 因此在迴圈結束、所有欄位皆已賦值完成後，
+  // 明確補一次重繪以保證每一項的下載圖示／預覽按鈕都反映最終狀態。
+  renderBatchQueue();
+
   if (pendingItems.length > 1) {
     const zipableCount = batchQueue.filter(i => i.status === 'done' && i.dlUrl).length;
     batchSummaryStats.innerHTML = `
@@ -4834,6 +5191,7 @@ startBtn.addEventListener('click', async () => {
 
   } finally { // ── 無論正常完成、取消或例外，都確保釋放 Wake Lock 並還原 UI ──
     isRunning = false;
+    stopMemMonitor(); // 記憶體監控橫跨整個批次（非單一檔案），故與 startMemMonitor() 對應置於此
     await releaseWakeLock(); // 🔓 辨識結束，釋放螢幕常亮
     startBtn.disabled = batchQueue.filter(i => i.status === 'pending').length === 0;
     fileInput.disabled = false;
@@ -5213,14 +5571,19 @@ function chunksToSubs(chunks) {
     .map((c, i) => ({
       index: i + 1,
       start: c.timestamp[0],
-      end:   c.timestamp[1] != null ? Math.max(c.timestamp[1], c.timestamp[0] + 0.001) : c.timestamp[0] + 2,
+      end:   resolveChunkEnd(c),
       text:  c.text.trim(),
+      ...(c._speaker != null ? { _speaker: c._speaker } : {}),
     }));
 }
 
 /** 把 subtitle 陣列轉回 Whisper chunks 格式 */
 function subsToChunks(subs) {
-  return subs.map(s => ({ text: ' ' + s.text, timestamp: [s.start, s.end] }));
+  return subs.map(s => ({
+    text: ' ' + s.text,
+    timestamp: [s.start, s.end],
+    ...(s._speaker != null ? { _speaker: s._speaker } : {}),
+  }));
 }
 
 /** 1a. 合併短行 */
@@ -5590,7 +5953,7 @@ function bopomofoLevenshtein(a, b) {
 }
 
 /**
- * 綜合相似度：0.6 × 注音聲學距離 + 0.4 × 字元 Levenshtein
+ * 綜合相似度：0.7 × 注音聲學距離 + 0.3 × 字元 Levenshtein
  * 讓同音異字得高分，兼顧字形相似字
  */
 function phoneticSimilarity(a, b) {
@@ -5758,7 +6121,7 @@ function applyHallucinationWarning(subs) {
     : s
   );
 }
-function applyPostProcessing(chunks) {
+async function applyPostProcessing(chunks) {
   if (!chunks || chunks.length === 0) return chunks;
 
   const cfg = getPostConfig();
@@ -5775,6 +6138,14 @@ function applyPostProcessing(chunks) {
   if (cfg.minDur)  subs = fixShortDuration(subs, cfg.minDurSec);
   if (cfg.period)  subs = addPeriods(subs, lang);
   if (cfg.casing)  subs = fixCasing(subs);
+  // 簡繁正規化：在醫學詞典 / 模糊比對之前執行（詞典與模糊比對皆以繁體字為基準）
+  if (cfg.opencc) {
+    try {
+      subs = await applyOpenCC(subs);
+    } catch (openccErr) {
+      log(`⚠ 簡繁正規化載入失敗：${openccErr.message}，跳過`, 'warn');
+    }
+  }
   if (cfg.medical) {
     const dictMap = buildDictMap(medicalDict);
     subs = applyMedicalDict(subs, dictMap);
@@ -5809,6 +6180,7 @@ function getPostConfig() {
     minDurSec:      parseFloat(document.getElementById('p_mindur_sec').value) || 0.8,
     period:         document.getElementById('tog_period').checked,
     casing:         document.getElementById('tog_case').checked,
+    opencc:         document.getElementById('tog_opencc')?.checked ?? false,
     medical:        document.getElementById('tog_medical').checked,
     fuzzy:          document.getElementById('tog_fuzzy')?.checked ?? false,
     fuzzyThreshold: parseFloat(document.getElementById('p_fuzzy_threshold')?.value) || 0.65,
@@ -5832,7 +6204,7 @@ document.getElementById('audioEnhanceHeader').addEventListener('click', () => {
 
 // Toggle → 顯示/隱藏參數區，並更新 badge
 function updatePostBadge() {
-  const toggles = ['tog_merge','tog_split','tog_overlap','tog_mindur','tog_period','tog_case','tog_medical','tog_fuzzy','tog_hallucination','tog_diarization'];
+  const toggles = ['tog_merge','tog_split','tog_overlap','tog_mindur','tog_period','tog_case','tog_opencc','tog_medical','tog_fuzzy','tog_hallucination','tog_diarization'];
   const count = toggles.filter(id => document.getElementById(id)?.checked).length;
   document.getElementById('postActiveBadge').textContent = `${count} 項啟用`;
   document.getElementById('postActiveBadge').style.background =
@@ -5866,7 +6238,7 @@ const toggleParamMap = {
   tog_hallucination:'params_hallucination',
 };
 
-['tog_merge','tog_split','tog_overlap','tog_mindur','tog_period','tog_case','tog_medical','tog_fuzzy','tog_hallucination','tog_diarization'].forEach(id => {
+['tog_merge','tog_split','tog_overlap','tog_mindur','tog_period','tog_case','tog_opencc','tog_medical','tog_fuzzy','tog_hallucination','tog_diarization'].forEach(id => {
   document.getElementById(id)?.addEventListener('change', () => {
     if (toggleParamMap[id]) {
       document.getElementById(toggleParamMap[id])?.classList.toggle('show',
@@ -5932,7 +6304,7 @@ function renderDictTable() {
       <td><input type="text" value="${escapeHtml(entry.raw)}" data-idx="${idx}" data-field="raw"></td>
       <td><input type="text" value="${escapeHtml(entry.zh)}" data-idx="${idx}" data-field="zh"></td>
       <td><input type="text" value="${escapeHtml(entry.en)}" data-idx="${idx}" data-field="en"></td>
-      <td><button class="dict-rm-btn" data-idx="${idx}" title="刪除">✕</button></td>
+      <td><button class="dict-rm-btn" data-idx="${idx}" title="刪除" aria-label="刪除">✕</button></td>
     `;
     tbody.appendChild(tr);
   });
