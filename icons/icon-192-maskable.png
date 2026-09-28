@@ -1,0 +1,15 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="512" height="512" fill="#0a0a0a" rx="80"/>
+  <!-- Waveform bars (representing audio/subtitle) -->
+  <rect x="80"  y="280" width="36" height="80"  fill="#00e5a0" rx="8" opacity="0.6"/>
+  <rect x="128" y="240" width="36" height="120" fill="#00e5a0" rx="8" opacity="0.75"/>
+  <rect x="176" y="200" width="36" height="160" fill="#00e5a0" rx="8"/>
+  <rect x="224" y="220" width="36" height="140" fill="#00e5a0" rx="8"/>
+  <rect x="272" y="180" width="36" height="180" fill="#00e5a0" rx="8"/>
+  <rect x="320" y="220" width="36" height="140" fill="#00e5a0" rx="8"/>
+  <rect x="368" y="260" width="36" height="100" fill="#00e5a0" rx="8" opacity="0.75"/>
+  <!-- Subtitle lines at bottom -->
+  <rect x="80"  y="390" width="240" height="14" fill="#00e5a0" rx="7" opacity="0.5"/>
+  <rect x="80"  y="414" width="180" height="14" fill="#00e5a0" rx="7" opacity="0.3"/>
+</svg>
