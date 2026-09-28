@@ -1,0 +1,18 @@
+# 依賴與測試工具（執行 tests/preview-panel.spec.ts 時本機安裝）
+node_modules/
+package-lock.json
+
+# Playwright
+test-results/
+playwright-report/
+playwright/.cache/
+
+# 作業系統／編輯器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# 本機環境變數（若未來新增）
+.env
+.env.local
