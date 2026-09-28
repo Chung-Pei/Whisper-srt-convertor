@@ -1,12 +1,12 @@
 // sw.js — Whisper 離線字幕產生器 Service Worker
 // CACHE_VERSION：每次更新 index.html 靜態資源後遞增（格式：YYYYMMDD-N）
-const CACHE_VERSION = '20260926-6';
+const CACHE_VERSION = '20260928-1';
 const CACHE_NAME    = `whisper-subtitler-${CACHE_VERSION}`;
 
 // App Shell：只快取 UI 骨架
-// BASE = '' 表示根目錄部署；子目錄部署請將 BASE 改為 '/your-subpath'
-// 根目錄部署（GitHub Pages root）
-const BASE = '';
+// BASE 由 sw.js 自身網址推得：根目錄部署 → ''；子路徑部署（username.github.io/repo/）→ '/repo'
+// 不需手動修改；manifest.json 的 start_url／scope／icons 亦須維持相對路徑，兩者搭配才能在任何部署位置運作
+const BASE = new URL('./', self.location).pathname.replace(/\/$/, '');
 
 // ⚠ icons/ 清單必須與 manifest.json 的 icons[].src 及 index.html 的
 //   <link rel="apple-touch-icon">／<link rel="icon"> 三處完全一致（檔名、大小寫）。
