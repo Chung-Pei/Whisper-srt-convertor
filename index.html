@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Whisper 離線字幕產生器 v22.4</title>
+<title>Whisper 離線字幕產生器 v24</title>
 <meta name="description" content="在瀏覽器中使用 Whisper AI 模型進行離線語音辨識與字幕產生，完全不上傳至伺服器。">
 <meta property="og:title" content="Whisper 離線字幕產生器">
 <meta property="og:description" content="在瀏覽器中使用 Whisper AI 模型進行離線語音辨識與字幕產生，完全不上傳至伺服器。">
@@ -45,6 +45,7 @@
 
   document.documentElement.setAttribute('style', theme === 'light' ? LIGHT : DARK);
   window._initTheme = theme;
+  window._themeStyles = { light: LIGHT, dark: DARK };   // 主題樣式的唯一來源：模組內的切換按鈕直接取用，不再另存一份
 })();
 </script>
 <style>
@@ -215,6 +216,7 @@
   }
 
   .model-btn:hover { border-color: var(--accent); color: var(--text); }
+  .model-btn:disabled { opacity: 0.45; cursor: not-allowed; }   /* 辨識中不可切換模型（切換會釋放執行中的 Worker） */
   .model-btn.active {
     background: rgba(0,229,160,0.08);
     border-color: var(--accent);
@@ -1393,7 +1395,7 @@
   <header>
     <div class="badge-offline">完全離線 · 無資料外傳</div>
     <h1>Whisper <span>離線</span><br>字幕產生器</h1>
-    <p class="subtitle">// v22.4 · Transformers.js 4.3.0 · Silero VAD · 逐字時間戳 · 注音聲學模糊匹配 · 簡繁正規化 · 斷點續傳 · 動態記憶體調適 · Wake Lock 防休眠</p>
+    <p class="subtitle">// v24 · Transformers.js 4.3.0 · Silero VAD · 逐字時間戳 · 注音聲學模糊匹配 · 簡繁正規化 · 斷點續傳 · 錯誤驅動降級 · Wake Lock 防休眠</p>
   </header>
 
   <div style="display:flex; justify-content:flex-end; margin-bottom:1rem;">
@@ -1415,7 +1417,8 @@
 
   <div class="warn-box" id="ramWarn" style="display:none;">
     ⚠ <strong>記憶體警告</strong><br>
-    large-v3-turbo 系列模型約 1.6GB，瀏覽器執行時需 <strong>3–4GB 可用 RAM</strong>。<br>
+    <span id="ramWarnLow" style="display:none;">此裝置記憶體偏低（手機／平板或 ≤4GB）。medium 與 large 模型<strong>可能無法載入或造成頁面崩潰</strong>，建議改用 base 或 small。<br></span>
+    <span id="ramWarnDefault">large-v3-turbo 系列模型約 1.6GB，瀏覽器執行時需 <strong>3–4GB 可用 RAM</strong>。<br></span>
     建議：64-bit Chrome／Edge、系統記憶體 ≥ 8GB。記憶體不足會導致頁面崩潰。<br>
     <span style="opacity:0.8;">ℹ 本工具已啟用<strong>自動量化</strong>（q8/q4），記憶體不足時自動壓縮模型至約 400–800MB。</span>
   </div>
@@ -1497,21 +1500,12 @@
         <label class="toggle-switch"><input type="checkbox" id="tog_normalize" checked><span class="toggle-slider"></span></label>
       </div>
 
-      <div class="post-section-label">人聲分離</div>
-
       <div class="post-toggle-row">
         <div class="post-toggle-info">
           <div class="post-toggle-name">🎤 UVR 人聲分離 <span class="fuzzy-badge">MDX-Net</span></div>
-          <div class="post-toggle-desc">使用 Kim_Vocal_2 模型分離人聲與背景音樂，大幅減少幻覺字幕（首次需下載 ~63MB 模型）。適合含背景音樂的影片、廣播錄音。純演講/會議建議關閉。</div>
+          <div class="post-toggle-desc">辨識前先用 Kim_Vocal_2 模型去除背景音樂，減少音樂造成的幻覺字幕。首次需下載約 64 MB 模型（存在瀏覽器，之後不再下載）。很慢：耗時為音訊長度的數倍，音訊上限 20 分鐘；低記憶體裝置（≤ 4 GB、iOS）不提供。單檔模式可另外下載人聲 WAV。純演講或會議錄音建議關閉。</div>
         </div>
         <label class="toggle-switch"><input type="checkbox" id="tog_uvr"><span class="toggle-slider"></span></label>
-      </div>
-      <div class="post-params cols1" id="params_uvr" style="display:none;">
-        <div class="param-group">
-          <label>分離強度（Margin）</label>
-          <input type="number" id="p_uvr_margin" value="44100" min="8820" max="88200" step="4410">
-          <span style="font-size:0.68rem;color:var(--muted);font-family:'IBM Plex Mono',monospace;">44100 = 標準（1秒），較大值 = 更乾淨人聲但略慢</span>
-        </div>
       </div>
     </div>
   </div>
@@ -1679,7 +1673,7 @@
         <label class="toggle-switch"><input type="checkbox" id="tog_fuzzy" checked><span class="toggle-slider"></span></label>
       </div>
       <div class="post-params cols1" id="params_fuzzy" style="display:grid;">
-        <div class="param-group"><label>相似度閾值（1=完全一致 / 0.55=較寬鬆）</label><input type="number" id="p_fuzzy_threshold" value="0.65" min="0.5" max="0.95" step="0.05"></div>
+        <div class="param-group"><label>相似度閾值（1=完全一致；越低越寬鬆、越容易誤改一般用語）</label><input type="number" id="p_fuzzy_threshold" min="0.5" max="0.95" step="0.05"></div>
       </div>
 
       <div class="post-toggle-row" style="border-top:1px solid rgba(255,255,255,0.04);margin-top:0.2rem;padding-top:0.45rem;">
@@ -1765,7 +1759,7 @@
     </div>
     <div class="prog-eta" id="progEta"></div>
     <div class="mem-bar-wrap" id="memBarWrap">
-      <span id="memBarLabel">RAM</span>
+      <span id="memBarLabel">JS 堆積</span>
       <div class="mem-bar-track"><div class="mem-bar-fill" id="memBarFill" style="width:0%"></div></div>
       <span id="memBarPct" style="min-width:2.5rem;text-align:right;">—</span>
     </div>
@@ -1800,7 +1794,7 @@
       <a class="btn-dl" id="dlBtn" href="#" download>⬇ 下載至預設路徑</a>
       <button class="btn-save-folder" id="btnSaveToFolder" disabled>📁 儲存至指定資料夾</button>
     </div>
-    <a id="dlVocalBtn" class="btn-dl" href="#" download="vocals.wav"
+    <a id="dlVocalBtn" class="btn-dl" download="vocals.wav"
        style="display:none;margin-top:0.5rem;width:100%;text-align:center;background:rgba(0,229,160,0.07);border-color:var(--accent);color:var(--accent);">
       🎤 下載人聲音訊（WAV）
     </a>
@@ -1882,8 +1876,7 @@ document.addEventListener('visibilitychange', async () => {
   }
 });
 
-// ── 動態記憶體調適 ──────────────────────────────────────────────────
-let _dynamicChunkSec = 30;  // 預設 30 秒，記憶體壓力時自動縮減
+// ── 記憶體條（僅主執行緒 JS 堆積；看不到 Worker／WASM）────────────────
 let _memMonitorTimer = null;
 
 function startMemMonitor() {
@@ -1902,7 +1895,7 @@ function startMemMonitor() {
     fill.style.width = p + '%';
     fill.className = 'mem-bar-fill' + (p > 85 ? ' danger' : p > 75 ? ' warn' : '');
     pct.textContent = `${used}/${total}MB`;
-    label.textContent = `RAM ${p}%`;
+    label.textContent = `JS 堆積 ${p}%`;
   }, 2000);
 }
 
@@ -1920,8 +1913,13 @@ const HF_TRANSFORMERS_VERSION = '4.3.0';
 const HF_TRANSFORMERS_URL     = `https://cdn.jsdelivr.net/npm/@huggingface/transformers@${HF_TRANSFORMERS_VERSION}/dist/transformers.min.js`;
 const HF_TRANSFORMERS_URL_FB  = `https://unpkg.com/@huggingface/transformers@${HF_TRANSFORMERS_VERSION}/dist/transformers.min.js`; // 不同 CDN 主機備援（jsdelivr → unpkg，同套件同版本，避免舊版 API 不相容）
 
-// 【核心修復 1】：加入 await 以確保 Transformers.js 模型徹底釋放，防止 OOM
-const WORKER_CODE = `
+// ── 三個 Worker 共用的「全域錯誤攔截」前導（v23 round 9 抽出）──────────────────
+// 原本 WORKER_CODE／DIARIZATION_WORKER_CODE／UVR_WORKER_CODE 各複製一份約 10 行的相同程式碼，
+// 且已實際分歧過：DIARIZATION 曾誤用 error: 欄位（導致使用者只看到「說話者分割失敗：undefined」），
+// UVR 則一直用 message: 欄位，與另兩個 Worker 的 payload: 不一致。
+// 現統一由此常數以 ${WORKER_ERROR_FORWARD} 插入三個樣板，ERROR 訊息的欄位固定為 payload，
+// 主執行緒所有 ERROR 消費端（workerCall／推論／diarization／UVR）一律讀 e.data.payload。
+const WORKER_ERROR_FORWARD = `
 // ── 全域未捕獲錯誤攔截：防止 Worker 內部錯誤冒泡為 console Uncaught Error ──
 self.onerror = (msg, src, line, col, err) => {
   self.postMessage({ type: 'ERROR', payload: (err && err.message) ? err.message : String(msg) });
@@ -1932,9 +1930,28 @@ self.addEventListener('unhandledrejection', (e) => {
   self.postMessage({ type: 'ERROR', payload: (reason && reason.message) ? reason.message : String(reason) });
   e.preventDefault();
 });
+`;
 
+// ── 辨識／說話者分割兩個 Worker 共用的 Transformers.js 載入器（r7 抽出）──────────────
+// 原本兩個 Worker 各自複製「主 CDN 失敗 → 備援 CDN」的 try/catch，且已分歧：說話者分割在兩個 CDN 都失敗時
+// 只丟出原始英文錯誤，辨識 Worker 則附有說明。現統一由此常數插入，兩邊行為與錯誤訊息一致。
+const WORKER_IMPORT_TRANSFORMERS = `
 const TRANSFORMERS_URL     = '${HF_TRANSFORMERS_URL}';
 const TRANSFORMERS_URL_FB  = '${HF_TRANSFORMERS_URL_FB}';
+// 回傳 { mod, fallback }；fallback=true 表示使用了備援 CDN
+async function importTransformers() {
+  try { return { mod: await import(TRANSFORMERS_URL), fallback: false }; }
+  catch (e) {
+    try { return { mod: await import(TRANSFORMERS_URL_FB), fallback: true }; }
+    catch (e2) {
+      throw new Error("無法載入 Transformers.js。若是首次使用，請確保網路連線正常以便快取依賴庫；若已離線使用，可能是瀏覽器快取被清除。詳細錯誤: " + e2.message);
+    }
+  }
+}
+`;
+
+// 【核心修復 1】：加入 await 以確保 Transformers.js 模型徹底釋放，防止 OOM
+const WORKER_CODE = `${WORKER_ERROR_FORWARD}${WORKER_IMPORT_TRANSFORMERS}
 
 let pipelineFn    = null;
 let ModelRegistry = null;   // v4 新增
@@ -1999,11 +2016,10 @@ function installFolderFetchInterceptor() {
   self.fetch = async function(resource, init) {
     const url = typeof resource === 'string' ? resource : (resource instanceof Request ? resource.url : null);
     if (url) {
-      let urlObj_chk;
-      try { urlObj_chk = new URL(url); } catch { return self._originalFetch(resource, init); }
+      let urlObj;
+      try { urlObj = new URL(url); } catch { return self._originalFetch(resource, init); }
       // 【安全修復】：驗證 hostname，防止 URL 含 'huggingface.co' 子字串繞過攔截
-      if (urlObj_chk.hostname !== 'huggingface.co') return self._originalFetch(resource, init);
-      const urlObj = urlObj_chk;
+      if (urlObj.hostname !== 'huggingface.co') return self._originalFetch(resource, init);
       const rawPath = urlObj.pathname.slice(1);
       const localPath = rawPath.replace('/resolve/main/', '/');
 
@@ -2031,20 +2047,8 @@ function installFolderFetchInterceptor() {
 
 async function loadLib() {
   if (pipelineFn) return;
-  let mod;
-  try {
-    // 嘗試從主要 CDN（jsdelivr）載入
-    mod = await import(TRANSFORMERS_URL);
-    self.postMessage({ type: 'LIB_VERSION', payload: { version: '${HF_TRANSFORMERS_VERSION}' } });
-  } catch (e) {
-    // 主要 CDN 載入失敗 → 改用備用 CDN（unpkg，同套件同版本）
-    try {
-      mod = await import(TRANSFORMERS_URL_FB);
-      self.postMessage({ type: 'LIB_VERSION', payload: { version: '${HF_TRANSFORMERS_VERSION}-fallback' } });
-    } catch (e2) {
-      throw new Error("無法載入 Transformers.js。若是首次使用，請確保網路連線正常以便快取依賴庫；若已離線使用，可能是瀏覽器快取被清除。詳細錯誤: " + e2.message);
-    }
-  }
+  const { mod, fallback } = await importTransformers();
+  self.postMessage({ type: 'LIB_VERSION', payload: { version: '${HF_TRANSFORMERS_VERSION}' + (fallback ? '-fallback' : '') } });
   pipelineFn    = mod.pipeline;
   ModelRegistry = mod.ModelRegistry ?? null;  // v4 才有
   envRef        = mod.env;
@@ -2054,34 +2058,33 @@ async function loadLib() {
   }
 }
 
-// ── 記憶體壓力偵測 ──────────────────────────────────────────────────────
-// performance.memory 僅 Chrome 支援（非標準 API）。
-// Firefox / Safari 不支援時回傳 0，使壓力訊號永不觸發。
-// 改用 navigator.storage.estimate() 作為跨瀏覽器補充：
-//   quota ≈ 可用磁碟/記憶體配額，usage ≈ 已使用量（粗略估算）
-// 兩者取較高值，確保 Chrome 精確值不被遮蓋。
-let _storageRatioCache = 0;
-let _storageRatioTs    = 0;
+// ── ModelRegistry 動態 dtype 查詢（v23 round 9 修正）───────────────────────
+// 主執行緒沒有載入 transformers.js、從未擁有 ModelRegistry，故查詢邏輯放在這裡：
+// loadLib() 完成後，ModelRegistry 在本 Worker 內是真的存在的。
+//
+// 政策分工（避免兩套「選哪個 dtype」的規則各自維護而分歧）：
+//   • 「偏好哪個 dtype」只有一套規則：主執行緒依可用記憶體與模型大小估算（_dtypeFallback），
+//     結果隨 LOAD_MODEL 以 payload.dtype 傳入。
+//   • ModelRegistry 只負責它獨有的資訊：該模型「實際發行了哪些量化檔案」。偏好的格式若存在就照用；
+//     不存在（例如模型只發行 q8）才改選最接近的可用格式，避免載入一個根本沒有檔案的 dtype。
+// （原先寫在主執行緒的 _dtypeViaRegistry 另有一套只看記憶體、不看模型大小的門檻，會把 145MB 的
+//  whisper-base 在可用記憶體 <3GB 時降成 q4，與實際運作中的靜態規則不一致，故不沿用。）
+const DTYPE_FOOTPRINT_ORDER = ['fp32', 'fp16', 'q8', 'q4'];   // 佔用記憶體由大到小
 
-async function refreshStorageRatio() {
-  // 每 5 秒更新一次，避免頻繁非同步呼叫
-  if (Date.now() - _storageRatioTs < 5000) return;
+async function _pickAvailableDtype(modelId, preferred) {
   try {
-    const est = await navigator.storage?.estimate?.();
-    if (est?.quota && est.quota > 0) {
-      _storageRatioCache = est.usage / est.quota;
-      _storageRatioTs    = Date.now();
-    }
-  } catch (_) {}
-}
-
-function getMemoryUsageRatio() {
-  // Chrome：使用精確 JS heap 數值
-  if (performance?.memory?.jsHeapSizeLimit > 0) {
-    return performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit;
+    if (!ModelRegistry) return preferred;
+    const dtypes = await ModelRegistry.get_available_dtypes(modelId);
+    if (!dtypes || dtypes.length === 0 || dtypes.includes(preferred)) return preferred;
+    const rank = DTYPE_FOOTPRINT_ORDER.indexOf(preferred);
+    if (rank < 0) return preferred;                            // 不認得的偏好值：不擅自改
+    // 先找「不比偏好更吃記憶體」中最接近的（較輕），再退而求其次找較重的（由近到遠）
+    const lighter = DTYPE_FOOTPRINT_ORDER.slice(rank + 1).find(d => dtypes.includes(d));
+    const heavier = DTYPE_FOOTPRINT_ORDER.slice(0, rank).reverse().find(d => dtypes.includes(d));
+    return lighter ?? heavier ?? dtypes[0];
+  } catch (_) {
+    return preferred; // 網路失敗或 v3 無此 API，靜默沿用偏好值
   }
-  // Firefox / Safari：回傳上次 storage estimate（非同步更新）
-  return _storageRatioCache;
 }
 
 let _chunkCounter = 0;
@@ -2125,12 +2128,13 @@ self.addEventListener('message', async (e) => {
           self.postMessage({ type: 'BACKEND', payload: { backend: 'webgpu', dtype } });
         } catch (_) {
           device = 'wasm';
-          dtype  = payload.dtype;
+          dtype  = await _pickAvailableDtype(payload.modelId, payload.dtype);
           self.postMessage({ type: 'BACKEND', payload: { backend: 'wasm-fallback', dtype } });
         }
       } else {
         device = 'wasm';
-        dtype  = payload.dtype;
+        // ModelRegistry 查詢優先於主執行緒傳來的靜態估算值（payload.dtype）；查詢失敗/離線時才用它
+        dtype  = await _pickAvailableDtype(payload.modelId, payload.dtype);
         self.postMessage({ type: 'BACKEND', payload: { backend: 'wasm', dtype } });
       }
 
@@ -2152,20 +2156,7 @@ self.addEventListener('message', async (e) => {
         return;
       }
 
-      // 非同步更新跨瀏覽器記憶體估算（不等待，下一輪 chunk 即可用到）
-      refreshStorageRatio().catch(() => {});
-
-      const memRatio = getMemoryUsageRatio();
-      if (memRatio > 0.85) {
-        self.postMessage({ type: 'MEMORY_PRESSURE', payload: { segIdx: payload.segIdx } });
-        return;
-      }
-      // 記憶體使用率超過 0.75 時發送降級訊號（但繼續推論）
-      if (memRatio > 0.75) {
-        self.postMessage({ type: 'DEGRADE_STRATEGY', payload: { ratio: memRatio, segIdx: payload.segIdx } });
-      }
-
-      const { audioData, language, task, promptText, segIdx, startSec, strideSec } = payload;
+      const { audioData, language, task, promptText, segIdx, startSec } = payload;
       const f32 = new Float32Array(audioData);
 
       // 建立 generate_kwargs，注入 initial_prompt（若有）
@@ -2185,7 +2176,7 @@ self.addEventListener('message', async (e) => {
       if (Object.keys(generateKwargs).length > 0) callOpts.generate_kwargs = generateKwargs;
       let result = await pipe(f32, callOpts);
 
-      self.postMessage({ type: 'CHUNK_DONE', payload: { result, segIdx, startSec, strideSec } });
+      self.postMessage({ type: 'CHUNK_DONE', payload: { result, segIdx, startSec } });
       result = null;
 
       // 每處理完 10 個 chunks，讓出 Event Loop 以便 GC
@@ -2232,18 +2223,23 @@ self.addEventListener('message', async (e) => {
 });
 `;
 
+// 由程式碼字串建立 Classic Blob Worker（辨識／說話者分割／人聲分離三處共用）。
+// Classic worker：dynamic import() 在現代瀏覽器的 classic blob worker 中完全支援；
+// 注意：type:'module' 的 Blob URL Worker 在 Chrome/Safari 中不被允許。
+// Worker 建構完成（或建構失敗）後立即撤銷 Blob URL，避免失敗時洩漏。
+function spawnWorker(code, options) {
+  const url = URL.createObjectURL(new Blob([code], { type: 'application/javascript' }));
+  try { return new Worker(url, options); }
+  finally { URL.revokeObjectURL(url); }
+}
+
 function createWorker() {
   if (inferenceWorker) {
     inferenceWorker.terminate();
     inferenceWorker = null;
     workerReady = false;
   }
-  const blob = new Blob([WORKER_CODE], { type: 'application/javascript' });
-  const blobUrl = URL.createObjectURL(blob);
-  // Classic worker：dynamic import() 在現代瀏覽器的 classic blob worker 中完全支援
-  // 注意：type:'module' 的 Blob URL Worker 在 Chrome/Safari 中不被允許
-  inferenceWorker = new Worker(blobUrl);
-  URL.revokeObjectURL(blobUrl);
+  inferenceWorker = spawnWorker(WORKER_CODE);
   // 主執行緒側攔截 Worker 未捕獲錯誤，轉為 UI log 而非 console Uncaught Error
   inferenceWorker.onerror = (e) => {
     e.preventDefault(); // 阻止冒泡至 window.onerror
@@ -2258,23 +2254,7 @@ function createWorker() {
 //  輸出：[{ id, start, end, confidence }] 說話者時間軸陣列
 //  處理大型音訊：以 10s 滑動視窗分段處理後合併
 // ══════════════════════════════════════════════════════════════════════
-const DIARIZATION_WORKER_CODE = `
-// ── 全域未捕獲錯誤攔截 ──────────────────────────────────────────────
-// 欄位統一用 payload（與主 Whisper worker 一致）：原本此處誤用 error:，
-// 導致主執行緒 workerCall()/onDiarMsg() 用 e.data.payload 解析時收到 undefined，
-// 使用者只會看到「說話者分割失敗：undefined」而看不到真正錯誤內容。
-self.onerror = (msg, src, line, col, err) => {
-  self.postMessage({ type: 'ERROR', payload: (err && err.message) ? err.message : String(msg) });
-  return true;
-};
-self.addEventListener('unhandledrejection', (e) => {
-  const reason = e.reason;
-  self.postMessage({ type: 'ERROR', payload: (reason && reason.message) ? reason.message : String(reason) });
-  e.preventDefault();
-});
-
-const TRANSFORMERS_URL     = '${HF_TRANSFORMERS_URL}';
-const TRANSFORMERS_URL_FB  = '${HF_TRANSFORMERS_URL_FB}';
+const DIARIZATION_WORKER_CODE = `${WORKER_ERROR_FORWARD}${WORKER_IMPORT_TRANSFORMERS}
 const MODEL_ID = 'onnx-community/pyannote-segmentation-3.0';
 const SAMPLE_RATE = 16000;
 const CHUNK_SAMPLES = 10 * SAMPLE_RATE;   // 10s per chunk
@@ -2282,17 +2262,11 @@ const STEP_SAMPLES  = 8  * SAMPLE_RATE;   // 8s step (2s overlap)
 
 let processor  = null;
 let model      = null;
-let _cancelled = false;
+let _runId     = 0;      // 每次 DIARIZE 取新編號；CANCEL 令編號失效，舊的迴圈在下一個視窗前自行停止（不再用會被新一輪 DIARIZE 蓋掉的旗標）
 
 async function loadModels(progress_cb) {
   if (processor && model) return;
-  let mod;
-  try {
-    mod = await import(TRANSFORMERS_URL);
-  } catch (e) {
-    // 主要 CDN 載入失敗 → 改用備用 CDN（unpkg，同套件同版本）
-    mod = await import(TRANSFORMERS_URL_FB);
-  }
+  const { mod } = await importTransformers();
   const { AutoProcessor, AutoModelForAudioFrameClassification, env } = mod;
   env.allowLocalModels = false;
   processor = await AutoProcessor.from_pretrained(MODEL_ID, { progress_callback: progress_cb });
@@ -2320,7 +2294,7 @@ self.addEventListener('message', async (e) => {
   const { type, payload } = e.data;
 
   if (type === 'CANCEL') {
-    _cancelled = true;
+    _runId++;            // 使進行中的 DIARIZE 失效；主執行緒已在按下取消的同一刻 reject 等待中的 Promise，不需回覆
     return;
   }
 
@@ -2334,7 +2308,7 @@ self.addEventListener('message', async (e) => {
   }
 
   if (type === 'DIARIZE') {
-    _cancelled = false;
+    const run = ++_runId;
     try {
       const audio   = payload;                       // Float32Array @ 16kHz
       const total   = audio.length;
@@ -2342,7 +2316,7 @@ self.addEventListener('message', async (e) => {
 
       // 滑動視窗分段處理
       for (let start = 0; start < total; start += STEP_SAMPLES) {
-        if (_cancelled) { self.postMessage({ type: 'CANCELLED' }); return; }
+        if (run !== _runId) return;     // 已被取消（或被新一輪取代）
         const end     = Math.min(start + CHUNK_SAMPLES, total);
         const chunk   = audio.slice(start, end);
         const startSec = start / SAMPLE_RATE;
@@ -2363,7 +2337,7 @@ self.addEventListener('message', async (e) => {
           }
         }
 
-        self.postMessage({ type: 'CHUNK_DONE', payload: {
+        self.postMessage({ type: 'PROGRESS', payload: {
           processed: end / SAMPLE_RATE,
           total:     total / SAMPLE_RATE,
           pct:       Math.round(end / total * 100),
@@ -2372,6 +2346,7 @@ self.addEventListener('message', async (e) => {
         if (end >= total) break;
       }
 
+      if (run !== _runId) return;
       // 依時間排序 → 合併相鄰同說話者段落
       allSegs.sort((a, b) => a.start - b.start || a.id - b.id);
       const merged = mergeSegments(allSegs);
@@ -2387,11 +2362,7 @@ self.addEventListener('message', async (e) => {
 let _diarizationWorker = null;
 function getDiarizationWorker() {
   if (_diarizationWorker) return _diarizationWorker;
-  const blob    = new Blob([DIARIZATION_WORKER_CODE], { type: 'application/javascript' });
-  const blobUrl = URL.createObjectURL(blob);
-  // Classic worker：dynamic import() 在現代瀏覽器的 classic blob worker 中完全支援
-  _diarizationWorker = new Worker(blobUrl);
-  URL.revokeObjectURL(blobUrl);
+  _diarizationWorker = spawnWorker(DIARIZATION_WORKER_CODE);
   // 主執行緒側攔截 Diarization Worker 未捕獲錯誤
   _diarizationWorker.onerror = (e) => {
     e.preventDefault();
@@ -2400,29 +2371,18 @@ function getDiarizationWorker() {
   return _diarizationWorker;
 }
 
-/** 執行說話者分割。回傳 segments 陣列，失敗回 null */
+/** 載入說話者分割模型（首次需下載約 18 MB）。失敗／逾時／取消皆 reject。 */
+function loadDiarizationModel() {
+  return workerCall(getDiarizationWorker(), 'LOAD', undefined, 'LOADED', 120_000,
+    { onProgress: (p) => log(`下載 pyannote: ${p?.name ?? ''}`, 'info') });
+}
+
+/** 執行說話者分割。回傳 segments 陣列；失敗／逾時／取消皆 reject（取消時訊息為 CANCELLED）。
+ *  與辨識、人聲分離共用 workerCall：逾時以「超過時限沒有任何進度訊息」計算，取消會立即 reject。 */
 async function runDiarization(mono, onProgress) {
-  return new Promise((resolve) => {
-    let worker;
-    try { worker = getDiarizationWorker(); } catch { return resolve(null); }
-    const timer = setTimeout(() => { worker.removeEventListener('message', onDiarMsg); resolve(null); }, 300_000);
-    function onDiarMsg(ev) {
-      const { type, payload } = ev.data;
-      if (type === 'DIARIZE_DONE') {
-        clearTimeout(timer);
-        worker.removeEventListener('message', onDiarMsg);
-        resolve(payload);
-      } else if (type === 'ERROR') {
-        clearTimeout(timer);
-        worker.removeEventListener('message', onDiarMsg);
-        resolve(null);
-      } else if (type === 'CHUNK_DONE' && onProgress) {
-        onProgress(payload);
-      }
-    }
-    worker.addEventListener('message', onDiarMsg);
-    worker.postMessage({ type: 'DIARIZE', payload: mono }, [mono.buffer]);
-  });
+  const done = await workerCall(getDiarizationWorker(), 'DIARIZE', mono, 'DIARIZE_DONE', 300_000,
+    { transfer: [mono.buffer], onProgress });
+  return done.payload;
 }
 
 /** 將說話者分割結果套用到字幕 chunks
@@ -2461,67 +2421,200 @@ function chunksToSrtWithSpeakers(chunks) {
 }
 
 
-function workerCall(worker, msgType, payload, resolveOn, timeoutMs = 300_000) {
+// ── 辨識切片的單一送出點與錯誤驅動降級（v24）─────────────────────────────────
+// v23.2 的 CHUNK_ERROR／逾時一律「靜默跳過該段」且不記錄錯誤文字，使用者無從得知字幕為何缺一段，
+// 也就沒有任何真實的 OOM 錯誤字串可供調整。v24：記錄原始錯誤、每段最多重試一次（必要時重載 Worker）、結束時列出跳過的段落。
+// 降級手段只用 dtype／後端，不縮短切片：Whisper 編碼器輸入固定 30 秒（不足補零），縮短切片不會降低編碼器記憶體。
+let CHUNK_TIMEOUT_MS = 300_000;     // 單段推論逾時（let：測試以 evalIn 縮短）
+const MAX_RETRY_STREAK = 3;         // 連續 3 段（各含重試）失敗後，後續段落不再重試
+const MAX_FAIL_STREAK  = 5;         // 連續 5 段失敗：判定模型不可用，終止該檔
+const OOM_ERROR_PATTERNS = [
+  /out of memory|\boom\b/i, /allocation failed/i, /bad_alloc/i, /cannot enlarge memory/i,
+  /WebAssembly\.Memory/i, /Aborted\(.*(memory|oom)/i, /device (was )?lost|GPUDevice.*lost/i,
+  /RangeError:.*(invalid typed array length|array buffer)/i,   // 只認記憶體相關的 RangeError；Maximum call stack、Invalid time value 等不是 OOM
+];
+const DTYPE_LADDER = ['fp32', 'fp16', 'q8', 'q4'];
+let _lastBackend = null;            // 最近一次 BACKEND 訊息的 backend（'webgpu'｜'wasm'｜'wasm-fallback'）
+
+function classifyInferenceError(msg) {
+  const m = String(msg ?? '');
+  return OOM_ERROR_PATTERNS.some((re) => re.test(m)) ? 'oom' : 'other';
+}
+function lighterDtype(d) {
+  const i = DTYPE_LADDER.indexOf(d);
+  return i < 0 ? 'q4' : DTYPE_LADDER[Math.min(i + 1, DTYPE_LADDER.length - 1)];
+}
+
+/** 送出一個 RUN_CHUNK 並等回覆。→ { ok:true, evt } ｜ { ok:false, kind:'oom'|'other'|'timeout'|'crash', error }。取消時丟出 CANCELLED。
+ *  audioCopy 會被 transfer（原陣列失效），呼叫端必須傳入複本。 */
+function runChunkOnWorker(worker, base, audioCopy, timeoutMs = CHUNK_TIMEOUT_MS) {
+  if (isCancelled) return Promise.reject(new Error('CANCELLED'));   // 呼叫端的取消檢查與此處之間隔著 await；已取消就不送出
   return new Promise((resolve, reject) => {
     let timer = null;
+    const cleanup = () => { clearTimeout(timer); worker.removeEventListener('message', onMsg); worker.removeEventListener('error', onErr); };
+    const done = (r) => { cleanup(); unregister(); resolve(r); };
+    const unregister = registerCancelReject((err) => { cleanup(); reject(err); });
+    const onMsg = (e) => {
+      const t = e.data?.type;
+      if (t === 'CHUNK_DONE' && e.data.payload?.segIdx === base.segIdx) done({ ok: true, evt: e.data });
+      else if (t === 'CHUNK_ERROR' && e.data.payload?.segIdx === base.segIdx) { const m = String(e.data.payload.error); done({ ok: false, kind: classifyInferenceError(m), error: m }); }
+      else if (t === 'ERROR') { const m = String(e.data.payload); done({ ok: false, kind: classifyInferenceError(m), error: m }); }
+    };
+    // Worker 的未捕捉例外：v23.2 只記 log、不會讓等待中的呼叫失敗，要等到 300 秒逾時才收尾
+    const onErr = (e) => done({ ok: false, kind: 'crash', error: e?.message || 'Worker error' });
+    timer = setTimeout(() => done({ ok: false, kind: 'timeout', error: '段落推論逾時' }), timeoutMs);
+    worker.addEventListener('message', onMsg);
+    worker.addEventListener('error', onErr);
+    try {
+      worker.postMessage({ type: 'RUN_CHUNK', payload: { ...base, audioData: audioCopy.buffer } }, [audioCopy.buffer]);
+    } catch (e) {
+      // 同步丟出（例如 DataCloneError）：不可讓例外穿出 Promise 而遺留監聽器與計時器
+      const m = String(e?.message ?? e);
+      done({ ok: false, kind: classifyInferenceError(m), error: m });
+    }
+  });
+}
+
+/** 失敗後重建 Worker 並重載模型。oom／crash：WebGPU 後端 → 改用 WASM（Worker 對 WebGPU 固定用 enc:fp16/dec:q4 或 fp32，忽略 dtype）；
+ *  WASM 後端 → 改選更輕的 dtype（寫回 _dtypeCache，本次工作階段延續）。timeout：同設定重建。 */
+async function reloadWorkerForRetry(kind, modelId) {
+  // modelId＝本次工作開始時載入的模型。辨識中使用者可能點選別的模型按鈕（selectedModel 隨之改變），重試不可換模型。
+  let dtype = await chooseDtype(modelId);
+  let preferGpu;                                     // undefined → 沿用 isWebGPUSupported()
+  if (kind === 'oom' || kind === 'crash') {
+    if (_lastBackend === 'webgpu') {
+      preferGpu = false;
+      log('⚠ GPU 推論失敗，改用 CPU（WASM）重載模型...', 'warn');
+    } else {
+      dtype = lighterDtype(dtype);
+      _dtypeCache.set(modelId, dtype);
+      // crash（Worker 未捕捉例外）原因不明，不可斷言是記憶體不足
+      log(kind === 'oom' ? `⚠ 記憶體不足，改用較輕的量化（${dtype}）重載模型...`
+                         : `⚠ Worker 異常終止，改用較輕的量化（${dtype}）重載模型...`, 'warn');
+    }
+  } else {
+    log('⚠ 推論逾時，重建 Worker 並重載模型...', 'warn');
+  }
+  const worker = createWorker();
+  workerReady = false;
+  const onBackend = (e) => { if (e.data?.type === 'BACKEND') applyBackendInfo(e.data.payload ?? {}); };
+  worker.addEventListener('message', onBackend);
+  try {
+    await workerCall(worker, 'LOAD_MODEL', buildLoadModelPayload(modelId, dtype, { preferGpu }), 'MODEL_READY', 600000);
+  } finally {
+    worker.removeEventListener('message', onBackend);
+  }
+  workerReady = true;
+  loadedModel = modelId;
+  return worker;
+}
+
+/** Worker 回報實際後端時：記下後端並更新畫面（首次載入與重試重載共用，避免重載後畫面仍顯示舊的 GPU 標示） */
+function applyBackendInfo(x) {
+  _lastBackend = x.backend ?? null;
+  const isGpu = x.backend === 'webgpu';
+  document.getElementById('statModel').textContent = isGpu ? '⚡GPU' : 'CPU';
+  // 更新 infoBox hint 顯示實際使用的 dtype
+  const hint = document.querySelector('#infoBox span');
+  if (hint) {
+    const dtypeStr = (x.dtype && typeof x.dtype === 'object')
+      ? `enc:${x.dtype.encoder_model ?? '?'} / dec:${x.dtype.decoder_model_merged ?? '?'}`
+      : (x.dtype ?? '?');
+    const backendStr = isGpu ? '⚡ WebGPU' : (x.backend === 'wasm-fallback' ? '⚠ WASM(GPU失敗)' : '⚪ WASM');
+    hint.textContent = `⚙ 量化：${dtypeStr} ／ 後端：${backendStr}`;
+  }
+}
+
+// opts.transfer：postMessage 的 transfer list（大型 buffer 零複製搬給 Worker）；
+// opts.onProgress：Worker 每送來一則 PROGRESS 就呼叫，並重置逾時計時器（逾時＝「超過 timeoutMs 沒有任何訊息」，長任務不會被誤殺）。
+function workerCall(worker, msgType, payload, resolveOn, timeoutMs = 300_000, opts = {}) {
+  return new Promise((resolve, reject) => {
+    let timer = null;
+    const disarm = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    const arm = () => {
+      disarm();
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          unregister();
+          worker.removeEventListener('message', handler);
+          reject(new Error(`Worker 逾時（等待 ${resolveOn} 超過 ${timeoutMs/1000} 秒）`));
+        }, timeoutMs);
+      }
+    };
     const unregister = registerCancelReject((err) => {
-      if (timer) clearTimeout(timer);
+      disarm();
       worker.removeEventListener('message', handler);
       reject(err);
     });
     const handler = (e) => {
       if (e.data.type === resolveOn) {
-        if (timer) clearTimeout(timer);
+        disarm();
         unregister();
         worker.removeEventListener('message', handler);
         resolve(e.data);
       } else if (e.data.type === 'ERROR') {
-        if (timer) clearTimeout(timer);
+        disarm();
         unregister();
         worker.removeEventListener('message', handler);
         reject(new Error(e.data.payload));
+      } else if (e.data.type === 'PROGRESS' && opts.onProgress) {
+        arm();
+        opts.onProgress(e.data.payload);
       }
     };
 
-    if (timeoutMs > 0) {
-      timer = setTimeout(() => {
-        unregister();
-        worker.removeEventListener('message', handler);
-        reject(new Error(`Worker 逾時（等待 ${resolveOn} 超過 ${timeoutMs/1000} 秒）`));
-      }, timeoutMs);
-    }
-
+    arm();
     worker.addEventListener('message', handler);
-    worker.postMessage({ type: msgType, payload });
+    worker.postMessage({ type: msgType, payload }, opts.transfer || []);
   });
 }
 
 const FSA_SUPPORTED = ('showDirectoryPicker' in window);
 
-// Chrome：精確 JS heap 可用量；Firefox/Safari：storage.estimate 粗估，或保守預設 2GB
-// _storageQuotaMB 由頁面載入時非同步填充
-let _storageQuotaMB = 2048;
-navigator.storage?.estimate?.().then(est => {
-  if (est?.quota > 0) _storageQuotaMB = Math.round(est.quota / 1024 / 1024);
-}).catch(() => {});
+// ── 記憶體分級（v24）──────────────────────────────────────────────────
+// 事實：navigator.deviceMemory 與 performance.memory 都只有 Chromium 有（Safari 沒有）；
+// navigator.storage.estimate() 的 quota 是「磁碟配額」不是 RAM（v23.2 在 Firefox／Safari 拿它 ×0.6 當可用記憶體）。
+// 規則：iOS（所有 iOS 瀏覽器都是 WebKit）一律視為 low——規劃假設以 iPhone 12（4 GB）為下限，未實測；
+//       Chromium 且 deviceMemory ≤ 4 視為 low；其餘為 standard。low 的可用記憶體上限 1024 MB，使 small 以上改選 q4。
+// standard 預算只用來挑 dtype（_dtypeFallback：< 3×模型大小 → q4；< 5× → q8）。1536 MB 是「現有模型 dtype 全部不變」的保守值：
+// small（460 MB）要維持 q8 需 ≥ 1380，未知模型（500 MB）需 ≥ 1500；再低 small 會改 q4、辨識精度下降。（spec 原值 2048，見 CHANGELOG）
+const TIER_BUDGET_MB = { low: 1024, standard: 1536 };
+
+function isIOSFamily(nav = navigator) {
+  return /iPhone|iPad|iPod/.test(nav.userAgent || '') ||
+         (nav.platform === 'MacIntel' && (nav.maxTouchPoints || 0) > 1);   // iPadOS 的 UA 偽裝成 Mac
+}
+
+function detectMemoryTier(nav = navigator) {
+  if (isIOSFamily(nav)) return { tier: 'low', source: 'ios' };
+  if (typeof nav.deviceMemory === 'number' && nav.deviceMemory <= 4) return { tier: 'low', source: 'deviceMemory' };
+  return { tier: 'standard', source: typeof nav.deviceMemory === 'number' ? 'deviceMemory' : 'default' };
+}
 
 function getAvailableMemoryMB() {
+  const { tier } = detectMemoryTier();
   if (performance?.memory?.jsHeapSizeLimit > 0) {
-    const total = performance.memory.jsHeapSizeLimit / 1024 / 1024;
-    const used  = performance.memory.usedJSHeapSize  / 1024 / 1024;
-    return Math.round(total - used);
+    const avail = Math.round((performance.memory.jsHeapSizeLimit - performance.memory.usedJSHeapSize) / 1024 / 1024);
+    return tier === 'low' ? Math.min(avail, TIER_BUDGET_MB.low) : avail;      // Chromium standard：與 v23.2 完全相同
   }
-  // Firefox / Safari：以 storage quota 的 60% 估算可用記憶體（保守值）
-  return Math.round(_storageQuotaMB * 0.6);
+  return TIER_BUDGET_MB[tier];                                                // Firefox／Safari：不再使用磁碟配額
 }
 
 function isWebGPUSupported() { return typeof navigator !== 'undefined' && !!navigator.gpu; }
 
-// ── chooseDtype：優先使用 ModelRegistry（v4）動態查詢，v3 退回靜態估算 ──
+// ── chooseDtype：主執行緒僅能做靜態估算（見下方說明），實際依 ModelRegistry 動態查詢在 Worker 內進行 ──
+// 修正紀錄（v23 round 9）：先前這裡還有一個 async function _dtypeViaRegistry()，內部引用全域
+// `ModelRegistry`——但 `ModelRegistry` 只在 WORKER_CODE 樣板字串內宣告，是 Worker 動態 import()
+// transformers.js 之後才存在的 Worker-only 變數，主執行緒從未載入過該函式庫、從未定義過這個名字。
+// 因此 _dtypeViaRegistry() 每次呼叫都會丟出 ReferenceError，被自己的 try/catch 吞掉、回傳 null，
+// chooseDtype() 因而 100% 落回下方的靜態估算，ModelRegistry 動態查詢路徑實際上從未執行過
+// （以真實瀏覽器＋主執行緒 console 埋樁重現確認：DTYPE_CATCH ReferenceError: ModelRegistry is not
+// defined）。現在的分工：「偏好哪個 dtype」只有這裡的靜態規則（依可用記憶體與模型大小）；
+// Worker 內的 _pickAvailableDtype() 拿 ModelRegistry 確認該格式的檔案真的存在，不存在才改選最接近者。
 const _dtypeCache = new Map();   // modelId → 已解析的 dtype string
 
 function _dtypeFallback(modelId) {
-  // 靜態備援：依可用記憶體估算（ModelRegistry 不可用時使用）
+  // 靜態估算：依可用記憶體與模型大小估算偏好的 dtype（Worker 再以 ModelRegistry 確認檔案存在）
   const available = getAvailableMemoryMB();
   const sizeMap = {
     'Xenova/whisper-base': 145, 'Xenova/whisper-small': 460,
@@ -2535,33 +2628,23 @@ function _dtypeFallback(modelId) {
   return 'fp32';
 }
 
-async function _dtypeViaRegistry(modelId) {
-  // 使用 ModelRegistry.get_available_dtypes() 查詢該模型實際支援的量化格式
-  // 依優先順序選擇最節省記憶體的可用格式
-  try {
-    if (!ModelRegistry) return null;
-    const available = getAvailableMemoryMB();
-    const dtypes = await ModelRegistry.get_available_dtypes(modelId);
-    if (!dtypes || dtypes.length === 0) return null;
-    // 記憶體充裕（>3GB）時允許 fp32；否則優先選輕量格式
-    const preferred = available > 3000
-      ? ['fp32', 'fp16', 'q8', 'q4']
-      : ['q4', 'q8', 'fp16', 'fp32'];
-    const chosen = preferred.find(d => dtypes.includes(d)) ?? dtypes[0];
-    log(`ModelRegistry dtype：${modelId} → ${chosen}（可用：${dtypes.join(', ')}）`, 'info');
-    return chosen;
-  } catch (_) {
-    return null; // 網路失敗或 v3 無此 API，靜默降級
-  }
-}
-
 async function chooseDtype(modelId) {
   if (_dtypeCache.has(modelId)) return _dtypeCache.get(modelId);
-  // 優先 ModelRegistry（v4），失敗退回靜態估算（v3 / 離線）
-  const dtype = (await _dtypeViaRegistry(modelId)) ?? _dtypeFallback(modelId);
-  log(`dtype：${modelId} → ${dtype}`, 'info');
+  const dtype = _dtypeFallback(modelId);
+  log(`dtype（依記憶體與模型大小估算；載入時會再確認該格式檔案存在）：${modelId} → ${dtype}`, 'info');
   _dtypeCache.set(modelId, dtype);
   return dtype;
+}
+
+// LOAD_MODEL 訊息內容的唯一組裝處。原本「首次載入」與「重試重載」兩處各自手寫一份物件字面值，
+// 欄位一旦增減就會漏改其中一處。
+function buildLoadModelPayload(modelId, dtype, opts = {}) {
+  return {
+    modelId,
+    dtype,
+    preferGpu: opts.preferGpu ?? isWebGPUSupported(),
+    modelFolderHandle: modelFolderHandle ?? null,
+  };
 }
 
 function formatSize(b) {
@@ -2612,7 +2695,9 @@ function buildEditorRow(chunk, idx) {
   row.className = 'editor-row';
   row.dataset.idx = idx;
 
-  const [ts, te] = chunk.timestamp ?? [0, null];
+  // 編輯器僅提供「起始時間」欄位可編輯，故這裡只取 timestamp[0]；結束時間沿用辨識結果，
+  // 缺失時由 resolveChunkEnd() 退回 start+2 秒
+  const [ts] = chunk.timestamp ?? [0];
 
   const tsEl = document.createElement('input');
   tsEl.className = 'editor-ts';
@@ -2623,7 +2708,11 @@ function buildEditorRow(chunk, idx) {
     const sec = displayToSec(tsEl.value);
     if (sec === null) { tsEl.style.color = 'var(--err)'; return; }
     tsEl.style.color = '';
-    _editorChunks[idx].timestamp[0] = sec;
+    const stamp = _editorChunks[idx].timestamp;
+    stamp[0] = sec;
+    // 新起始時間若已不早於既有結束時間（例如「新增段落」的列被改到很後面），舊結束時間會讓該段落
+    // 被 resolveChunkEnd() 夾成只有 1 毫秒；此時改用與「新增段落」相同的預設長度（2 秒）
+    if (stamp[1] == null || stamp[1] <= sec) stamp[1] = sec + 2;
   });
 
   const textEl = document.createElement('textarea');
@@ -2758,15 +2847,11 @@ function chunksToSrt(chunks) {
     }).join('\n\n') + '\n';
 }
 
+// VTT 與 SRT 的時間格式只差毫秒分隔符（'.' vs ','）。原本這裡複製了一份與 fmtTime() 逐行相同的
+// 換算邏輯（jscpd 偵測到 9 行重複），與先前 secToDisplay() 分歧出「4 位數毫秒」錯誤是同一類風險，
+// 故改為委派給 fmtTime()，維持唯一真實來源（chunksToMarkdown 早已採用相同的 .replace(',', '.') 寫法）。
 function fmtTimeVtt(sec) {
-  sec = Math.max(0, sec);
-  const totalMs  = Math.floor(sec * 1000);
-  const ms       = totalMs % 1000;
-  const totalSec = Math.floor(totalMs / 1000);
-  const h  = Math.floor(totalSec / 3600);
-  const m  = Math.floor((totalSec % 3600) / 60);
-  const s  = totalSec % 60;
-  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
+  return fmtTime(sec).replace(',', '.');
 }
 
 function chunksToVtt(chunks, opts) {
@@ -2856,8 +2941,12 @@ const progFill  = document.getElementById('progFill');
 const progEta   = document.getElementById('progEta');
 
 let _inferStart   = 0;
-let _inferredSec  = 0;
-let _totalAudSec  = 0;
+// 修正紀錄（v23 round 9）：原本這裡還有 let _inferredSec / _totalAudSec，在整個推論迴圈中
+// 逐段落更新（見下方 runInference），但全檔案搜尋確認從未被讀取——updateEta() 的實際簽章是
+// updateEta(processedAudioSec, totalAudioSec)，呼叫端在呼叫當下直接傳入區域變數
+// （seg.startSec / totalAudSec），並未讀取這兩個全域值。研判是重構 updateEta 為顯式參數傳遞
+// 後，舊版直接讀取全域值的寫法殘留、忘記一併移除。經 no-unused-vars 靜態分析＋人工追蹤全部
+// 讀寫點確認零讀取後移除；_inferStart 因仍被 updateEta() 讀取而保留。
 
 function setProgress(pct, label, indet = false) {
   progLabel.textContent = label;
@@ -2866,6 +2955,8 @@ function setProgress(pct, label, indet = false) {
   if (!indet) progFill.style.width = pct + '%';
 }
 
+function formatEtaSec(s) { return s < 60 ? `${Math.round(s)}s` : `${Math.floor(s/60)}m${Math.round(s%60)}s`; }
+
 function updateEta(processedAudioSec, totalAudioSec) {
   if (!progEta) return;
   if (processedAudioSec <= 0 || totalAudioSec <= 0) { progEta.classList.remove('show'); return; }
@@ -2873,16 +2964,15 @@ function updateEta(processedAudioSec, totalAudioSec) {
   const rate      = processedAudioSec / elapsed;
   const remaining = (totalAudioSec - processedAudioSec) / rate;
   const rtf       = elapsed / processedAudioSec;
-  const fmtSec = s => s < 60 ? `${Math.round(s)}s` : `${Math.floor(s/60)}m${Math.round(s%60)}s`;
   progEta.classList.add('show');
   progEta.innerHTML =
-    `<span>&#x23F1; 剩餘：<strong style="color:var(--text)">${fmtSec(remaining)}</strong></span>` +
+    `<span>&#x23F1; 剩餘：<strong style="color:var(--text)">${formatEtaSec(remaining)}</strong></span>` +
     `<span>速度：<strong style="color:var(--text)">${rate.toFixed(1)}&times; 實時</strong></span>` +
     `<span>RTF：<strong style="color:var(--text)">${rtf.toFixed(2)}</strong></span>`;
 }
 
 function resetEta() {
-  _inferStart  = 0; _inferredSec = 0; _totalAudSec = 0;
+  _inferStart = 0;
   if (progEta) progEta.classList.remove('show');
 }
 
@@ -3027,6 +3117,10 @@ btnClearOutFolder.addEventListener('click', () => {
   btnSaveToFolder.disabled = true;
 });
 
+function setModelButtonsDisabled(disabled) {
+  document.querySelectorAll('.model-btn').forEach(b => { b.disabled = disabled; });
+}
+
 document.querySelectorAll('.model-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.model-btn').forEach(b => b.classList.remove('active'));
@@ -3070,7 +3164,11 @@ document.querySelectorAll('.model-btn').forEach(btn => {
     infoBox.appendChild(textNode);
     infoBox.appendChild(br);
     infoBox.appendChild(hint);
-    document.getElementById('ramWarn').style.display = btn.dataset.warn === 'ram' ? 'block' : 'none';
+    const lowTier = detectMemoryTier().tier === 'low';
+    const bigModel = /whisper-(medium|large)/.test(btn.dataset.model || '');
+    document.getElementById('ramWarn').style.display = (btn.dataset.warn === 'ram' || (lowTier && bigModel)) ? 'block' : 'none';
+    document.getElementById('ramWarnLow').style.display = (lowTier && bigModel) ? 'inline' : 'none';
+    document.getElementById('ramWarnDefault').style.display = (lowTier && bigModel) ? 'none' : 'inline';
     updateModelFolderStatus();
     // dtype 快取清除，下次 chooseDtype 重新查詢新模型
     _dtypeCache.delete(selectedModel);
@@ -3084,6 +3182,7 @@ window.addEventListener('beforeunload', () => {
   }
   const dlBtn = document.getElementById('dlBtn');
   if (dlBtn?.href?.startsWith('blob:')) URL.revokeObjectURL(dlBtn.href);
+  resetVocalDownload();
   for (const item of batchQueue) {
     if (item.dlUrl) URL.revokeObjectURL(item.dlUrl);
   }
@@ -3101,37 +3200,46 @@ const batchCountEl  = document.getElementById('batchCount');
 // ══════════════════════════════════════════════════════════════════════
 //  批次 ZIP 打包下載（JSZip 懶載入）
 // ══════════════════════════════════════════════════════════════════════
-let _jszip = null;
-async function loadJSZip() {
-  if (_jszip) return _jszip;
-  await new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = JSZIP_CDN;
-    s.onload  = resolve;
-    s.onerror = () => reject(new Error('JSZip 載入失敗'));
-    document.head.appendChild(s);
-  });
-  _jszip = window.JSZip;
-  return _jszip;
+// 動態載入 script 標籤的唯一實作：JSZip、OpenCC、VAD（onnxruntime-web＋vad-web）共用（原本各寫一份）。
+// 同一網址只載一次（進行中的載入共用同一個 Promise）；失敗時移除快取與節點，下次呼叫可重試。
+const _scriptLoads = new Map();
+function loadScriptOnce(src) {
+  let p = _scriptLoads.get(src);
+  if (!p) {
+    p = new Promise((resolve, reject) => {
+      const el = document.createElement('script');
+      el.src = src;
+      el.onload  = resolve;
+      el.onerror = () => { _scriptLoads.delete(src); el.remove(); reject(new Error('script load failed: ' + src)); };
+      document.head.appendChild(el);
+    });
+    _scriptLoads.set(src, p);
+  }
+  return p;
+}
+
+let _jszipLoad = null;
+function loadJSZip() {
+  if (!_jszipLoad) {
+    _jszipLoad = loadScriptOnce(JSZIP_CDN)
+      .then(() => window.JSZip)
+      .catch(() => { _jszipLoad = null; throw new Error('JSZip 載入失敗'); });
+  }
+  return _jszipLoad;
 }
 
 // ══════════════════════════════════════════════════════════════════════
 //  簡繁正規化（OpenCC 懶載入）— cn→twp（簡體轉台灣正體，含在地慣用詞）
 // ══════════════════════════════════════════════════════════════════════
-let _openccConverter = null;
-async function loadOpenCC() {
-  if (_openccConverter) return _openccConverter;
-  if (!window.OpenCC) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = OPENCC_CDN;
-      s.onload  = resolve;
-      s.onerror = () => reject(new Error('OpenCC 載入失敗'));
-      document.head.appendChild(s);
-    });
+let _openccLoad = null;
+function loadOpenCC() {
+  if (!_openccLoad) {
+    _openccLoad = (async () => {
+      if (!window.OpenCC) await loadScriptOnce(OPENCC_CDN);
+      return window.OpenCC.Converter({ from: 'cn', to: 'twp' });
+    })().catch(() => { _openccLoad = null; throw new Error('OpenCC 載入失敗'); });
   }
-  _openccConverter = window.OpenCC.Converter({ from: 'cn', to: 'twp' });
-  return _openccConverter;
+  return _openccLoad;
 }
 
 /** 簡繁正規化：逐筆改寫 subs[i].text（cn→twp），簽名與 applyMedicalDict(subs) 一致 */
@@ -3248,7 +3356,7 @@ function renderBatchQueue() {
       <span class="batch-item-icon">${icons[item.status] || '⏳'}</span>
       <span class="batch-item-name" title="${escapeHtml(item.file.name)}">${escapeHtml(item.file.name)}</span>
       <span class="batch-item-size">${formatSize(item.file.size)}</span>
-      <span class="batch-item-status ${statusClass}">${statusLabels[item.status] || '等待中'}</span>
+      <span class="batch-item-status ${statusClass}">${statusLabels[item.status] || '等待中'}${item.status === 'done' && item.skippedCount ? `（${item.skippedCount} 段跳過）` : ''}</span>
       ${previewBtn}
       ${item.status === 'pending' ? `<button class="batch-item-rm" data-id="${item.id}" title="移除" aria-label="移除">✕</button>` : dlAnchor}
     `;
@@ -3542,14 +3650,18 @@ async function clearAllIDBCache() {
 
 const _initIdbPromise = clearAllIDBCache();
 
-async function idbPut(key, value) {
+// 單一份 IndexedDB 讀寫（音訊分片與 UVR 模型快取共用；store 預設為音訊分片庫）。
+// 原本 UVR 另有一份 uvrIdbGet／uvrIdbPut，且已分歧：只有 UVR 版處理 tx.onabort。配額不足（QuotaExceededError）
+// 常在交易「提交」時才發生，只會觸發 abort、不會觸發 error，沒有 onabort 的寫入 Promise 就永遠不會結束。
+async function idbPut(key, value, store = IDB_STORE) {
   try {
     const db = await openIDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, 'readwrite');
-      tx.objectStore(IDB_STORE).put(value, key);
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(store, 'readwrite');
+      tx.objectStore(store).put(value, key);
       tx.oncomplete = resolve;
       tx.onerror    = (e) => reject(e.target.error);
+      tx.onabort    = () => reject(tx.error ?? new Error('IndexedDB 交易被中止'));   // 保證 reject 的是 Error（呼叫端會讀 err.message）
     });
   } catch (e) {
     console.warn("IndexedDB 寫入失敗", e);
@@ -3557,10 +3669,10 @@ async function idbPut(key, value) {
   }
 }
 
-async function idbGet(key) {
+async function idbGet(key, store = IDB_STORE) {
   const db = await openIDB();
   return new Promise((resolve, reject) => {
-    const req = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).get(key);
+    const req = db.transaction(store, 'readonly').objectStore(store).get(key);
     req.onsuccess = (e) => resolve(e.target.result ?? null);
     req.onerror   = (e) => reject(e.target.error);
   });
@@ -3601,61 +3713,81 @@ async function readAudioShard(cacheKey, shardIdx) {
   return idbGet(`${cacheKey}:shard:${shardIdx}`);
 }
 
-async function decodeAudio(file) {
+// ── 解碼（v24：單一路徑、16 kHz 直接解碼、就地降混與正規化）──────────────────
+// 解碼用 AudioContext 優先以目標取樣率建立：瀏覽器在解碼時直接輸出 16 kHz，
+// 省下「整段高取樣率緩衝＋離線重取樣＋多份複本」。實測（Chromium）峰值 −64%～−86%、音調振幅誤差不增反減。
+// 不支援該選項時退回預設；實際取樣率一律以 decoded.sampleRate 判斷（Safari 是否忽略此選項，來源互相矛盾，必須執行期驗證）。
+function createDecodeContext(rate) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  try { return new AC({ sampleRate: rate }); } catch (_) { return new AC(); }
+}
+
+// 離線重取樣（Web Audio）。channels：長度相同的 Float32Array 陣列；回傳各聲道的獨立複本（不與 AudioBuffer 共用記憶體）。
+async function resampleChannels(channels, fromRate, toRate) {
+  log(`重取樣：${fromRate}Hz → ${toRate}Hz`, 'info');
+  const n          = channels[0].length;
+  const targetLen  = Math.round(n * toRate / fromRate);
+  const offlineCtx = new OfflineAudioContext(channels.length, targetLen, toRate);
+  const buf        = offlineCtx.createBuffer(channels.length, n, fromRate);
+  channels.forEach((c, i) => buf.copyToChannel(c, i));
+  const src = offlineCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(offlineCtx.destination);
+  src.start(0);
+  const rendered = await offlineCtx.startRendering();
+  return channels.map((_, i) => rendered.getChannelData(i).slice());
+}
+
+/** 讀檔並解碼成 AudioBuffer（以 rate 為目標取樣率；瀏覽器不照辦時 AudioBuffer.sampleRate 會是實際值）。
+ *  辨識（16 kHz）與人聲分離（44.1 kHz）共用，錯誤訊息、取消檢查與資源釋放只此一份。 */
+async function decodeFileToBuffer(file, rate) {
+  let arrayBuf = await file.arrayBuffer();
+  if (isCancelled) throw new Error('CANCELLED');
+  const ctx = createDecodeContext(rate);
+  try {
+    return await ctx.decodeAudioData(arrayBuf);
+  } catch (err) {
+    throw new Error('音訊解碼失敗：' + err.message);
+  } finally {
+    arrayBuf = null;
+    ctx.close();
+  }
+}
+
+/** 多聲道降混成單聲道：依聲道序累加、最後除以聲道數（運算順序與 v23.2 相同）。單聲道直接回傳 AudioBuffer 的聲道資料（不複製）。 */
+function mixToMono(buffer) {
+  const numCh = buffer.numberOfChannels;
+  if (numCh === 1) return buffer.getChannelData(0);
+  const len  = buffer.getChannelData(0).length;
+  const mono = new Float32Array(len);
+  for (let ch = 0; ch < numCh; ch++) {
+    const chData = buffer.getChannelData(ch);
+    for (let s = 0; s < len; s++) mono[s] += chData[s];
+  }
+  for (let s = 0; s < len; s++) mono[s] /= numCh;
+  return mono;
+}
+
+/** 解碼檔案 → 16 kHz 單聲道 Float32Array（未正規化）。 */
+async function decodeToMono16k(file) {
+  log('解碼音訊中...', 'info');
+  let decoded = await decodeFileToBuffer(file, SR);
+  const mono = mixToMono(decoded);                  // 單聲道時不複製：AudioBuffer 的聲道資料由此陣列持有
+  const decodedRate = decoded.sampleRate;
+  decoded = null;
+
+  return decodedRate === SR ? mono : (await resampleChannels([mono], decodedRate, SR))[0];
+}
+
+// mono16k：已經是 16 kHz 單聲道的音訊（人聲分離的輸出）。傳入時略過解碼，其餘流程（正規化、diarization 快照、大檔 IDB 分片）與一般音訊完全相同。
+async function decodeAudio(file, mono16k = null) {
   await _initIdbPromise;
 
-
-  let mono = null;
-
-  // ── 路徑 B：主執行緒 decodeAudioData（通用 fallback）──────────
-  if (!mono) {
-    log('解碼音訊中...', 'info');
-    const arrayBuf2 = await file.arrayBuffer();
-    if (isCancelled) throw new Error('CANCELLED');
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    let decoded;
-    try {
-      decoded = await audioCtx.decodeAudioData(arrayBuf2);
-    } catch (decodeErr) {
-      audioCtx.close();
-      throw new Error('音訊解碼失敗：' + decodeErr.message);
-    }
-    audioCtx.close();
-
-    if (decoded.numberOfChannels === 1) {
-      mono = decoded.getChannelData(0).slice();
-    } else {
-      const numCh = decoded.numberOfChannels;
-      const len   = decoded.getChannelData(0).length;
-      mono = new Float32Array(len);
-      for (let ch = 0; ch < numCh; ch++) {
-        const chData = decoded.getChannelData(ch);
-        for (let s = 0; s < len; s++) mono[s] += chData[s];
-      }
-      for (let s = 0; s < len; s++) mono[s] /= numCh;
-    }
-
-    const originalSampleRate = decoded.sampleRate;
-    decoded = null;
-
-    if (originalSampleRate !== SR) {
-      log(`重取樣：${originalSampleRate}Hz → ${SR}Hz`, 'info');
-      const targetLen  = Math.round(mono.length * SR / originalSampleRate);
-      const offlineCtx = new OfflineAudioContext(1, targetLen, SR);
-      const buf        = offlineCtx.createBuffer(1, mono.length, originalSampleRate);
-      buf.copyToChannel(mono, 0);
-      const src = offlineCtx.createBufferSource();
-      src.buffer = buf;
-      src.connect(offlineCtx.destination);
-      src.start(0);
-      const resampled = await offlineCtx.startRendering();
-      mono = resampled.getChannelData(0).slice();
-    }
-  }
+  let mono = mono16k ?? await decodeToMono16k(file);
 
   // ── 音訊正規化（Peak Normalization → -1dBTP）────────────────────
   if (document.getElementById('tog_normalize')?.checked) {
-    mono = applyPeakNormalization(mono);
+    mono = applyPeakNormalizationInPlace(mono);
     log('✓ 音訊正規化完成（Peak Normalization）', 'ok');
   }
 
@@ -3678,45 +3810,6 @@ async function decodeAudio(file) {
     } catch (e) {
       if (e.message === 'CANCELLED') throw e;
       log('⚠ IndexedDB 儲存失敗，降級使用記憶體模式處理大檔案', 'warn');
-      if (!mono) {
-        log('⚠ 記憶體已釋放，重新解碼音訊...', 'warn');
-        const arrayBuf2 = await file.arrayBuffer();
-        const audioCtx2 = new (window.AudioContext || window.webkitAudioContext)();
-        let decoded2;
-        try {
-          decoded2 = await audioCtx2.decodeAudioData(arrayBuf2);
-        } catch (decodeErr2) {
-          audioCtx2.close();
-          throw new Error('音訊重新解碼失敗：' + decodeErr2.message);
-        }
-        audioCtx2.close();
-        const origSR2 = decoded2.sampleRate;
-        if (decoded2.numberOfChannels === 1) {
-          mono = decoded2.getChannelData(0).slice();
-        } else {
-          const numCh2 = decoded2.numberOfChannels;
-          const len2   = decoded2.getChannelData(0).length;
-          mono = new Float32Array(len2);
-          for (let ch = 0; ch < numCh2; ch++) {
-            const chData2 = decoded2.getChannelData(ch);
-            for (let s = 0; s < len2; s++) mono[s] += chData2[s];
-          }
-          for (let s = 0; s < len2; s++) mono[s] /= numCh2;
-        }
-        decoded2 = null;
-        if (origSR2 !== SR) {
-          const targetLen2 = Math.round(mono.length * SR / origSR2);
-          const offCtx2 = new OfflineAudioContext(1, targetLen2, SR);
-          const buf2 = offCtx2.createBuffer(1, mono.length, origSR2);
-          buf2.copyToChannel(mono, 0);
-          const src2 = offCtx2.createBufferSource();
-          src2.buffer = buf2;
-          src2.connect(offCtx2.destination);
-          src2.start(0);
-          const resampled2 = await offCtx2.startRendering();
-          mono = resampled2.getChannelData(0).slice();
-        }
-      }
       return { audio: mono, monoSnapshot };
     }
   }
@@ -3725,7 +3818,7 @@ async function decodeAudio(file) {
 }
 
 // ── Peak Normalization ─────────────────────────────────────────────
-function applyPeakNormalization(samples) {
+function applyPeakNormalizationInPlace(samples) {
   let peak = 0;
   for (let i = 0; i < samples.length; i++) {
     const abs = Math.abs(samples[i]);
@@ -3734,9 +3827,8 @@ function applyPeakNormalization(samples) {
   if (peak < 0.001) return samples; // 幾乎靜音，跳過
   // -1dBTP = 0.8913
   const gain = 0.8913 / peak;
-  const out = new Float32Array(samples.length);
-  for (let i = 0; i < samples.length; i++) out[i] = samples[i] * gain;
-  return out;
+  for (let i = 0; i < samples.length; i++) samples[i] = samples[i] * gain;   // 與 v23.2 逐位元相同，但不再另配一份完整長度陣列
+  return samples;
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -3747,49 +3839,39 @@ function applyPeakNormalization(samples) {
 
 const VAD_WEB_CDN   = 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.31/dist/';
 const ONNX_WASM_CDN = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/';
+// ort 主檔名有新舊兩種（1.19+ 主入口更名為 ort.all.min.js＝完整 WASM+WebGPU bundle），先試新的、失敗再試舊的。VAD（主執行緒）與 UVR Worker 共用這一份。
+const ORT_SCRIPT_FILES = ['ort.all.min.js', 'ort.min.js'];
 const JSZIP_CDN     = 'https://cdn.jsdelivr.net/npm/jszip@3.10.2/dist/jszip.min.js';
 const OPENCC_CDN     = 'https://cdn.jsdelivr.net/npm/opencc-js@1.4.2/dist/umd/cn2t.js';
 
 let _vadInstance = null;
+let _vadInstanceThreshold = null;   // 建立 _vadInstance 時使用的 Silero 閾值；UI 改值後須重建（NonRealTimeVAD 的閾值只能在建立時給）
 let _vadLoading  = false;
 let _vadScriptsLoaded = false;
 
 async function ensureVadScripts() {
   if (_vadScriptsLoaded || window.vad) { _vadScriptsLoaded = true; return; }
-  await new Promise((resolve, reject) => {
-    const ortScript = document.createElement('script');
-    // onnxruntime-web 1.19+ 主入口更名為 ort.all.min.js（完整 WASM+WebGPU bundle）
-    ortScript.src = ONNX_WASM_CDN + 'ort.all.min.js';
-    ortScript.onload = () => {
-      const vadScript = document.createElement('script');
-      vadScript.src = VAD_WEB_CDN + 'bundle.min.js';
-      vadScript.onload  = () => { _vadScriptsLoaded = true; resolve(); };
-      vadScript.onerror = () => reject(new Error('vad-web bundle 載入失敗（請確認網路連線）'));
-      document.head.appendChild(vadScript);
-    };
-    // 若 ort.all.min.js 不存在則 fallback 到舊版檔名
-    ortScript.onerror = () => {
-      const ortFallback = document.createElement('script');
-      ortFallback.src = ONNX_WASM_CDN + 'ort.min.js';
-      ortFallback.onload = () => {
-        const vadScript = document.createElement('script');
-        vadScript.src = VAD_WEB_CDN + 'bundle.min.js';
-        vadScript.onload  = () => { _vadScriptsLoaded = true; resolve(); };
-        vadScript.onerror = () => reject(new Error('vad-web bundle 載入失敗（請確認網路連線）'));
-        document.head.appendChild(vadScript);
-      };
-      ortFallback.onerror = () => reject(new Error('onnxruntime-web 載入失敗（請確認網路連線）'));
-      document.head.appendChild(ortFallback);
-    };
-    document.head.appendChild(ortScript);
-  });
+  // 載入順序：onnxruntime-web → vad-web bundle。ort 主檔名有新舊兩種，先試新的、失敗再試舊的。
+  // （原本「載入 vad-web bundle」的 6 行邏輯在 onload 與 fallback 的 onload 各複製一份，抽成 loadVadBundle。）
+  const loadScript = loadScriptOnce;
+  const loadVadBundle = () =>
+    loadScript(VAD_WEB_CDN + 'bundle.min.js')
+      .then(() => { _vadScriptsLoaded = true; })
+      .catch(() => { throw new Error('vad-web bundle 載入失敗（請確認網路連線）'); });
+
+  let ortLoaded = false;
+  for (const f of ORT_SCRIPT_FILES) {
+    try { await loadScript(ONNX_WASM_CDN + f); ortLoaded = true; break; } catch { /* 試下一個檔名 */ }
+  }
+  if (!ortLoaded) throw new Error('onnxruntime-web 載入失敗（請確認網路連線）');
+  await loadVadBundle();
 }
 
-async function getVadInstance() {
-  if (_vadInstance) return _vadInstance;
+async function getVadInstance(threshold = SILERO_VAD_THRESHOLD) {
+  if (_vadInstance && _vadInstanceThreshold === threshold) return _vadInstance;
   if (_vadLoading) {
     while (_vadLoading) await new Promise(r => setTimeout(r, 80));
-    return _vadInstance;
+    if (_vadInstance && _vadInstanceThreshold === threshold) return _vadInstance;
   }
   _vadLoading = true;
   try {
@@ -3801,18 +3883,20 @@ async function getVadInstance() {
     // 自動儲存到與 Whisper 模型相同的資料夾（同一 installFolderFetchInterceptor 機制）
     _vadInstance = await window.vad.NonRealTimeVAD.new({
       model: 'v5',
-      positiveSpeechThreshold: 0.5,
-      negativeSpeechThreshold: 0.35,
+      positiveSpeechThreshold: threshold,
+      negativeSpeechThreshold: Math.max(0.05, threshold - 0.15),   // 預設 0.5 → 0.35（與原本寫死的值相同）
       redemptionFrames: 8,
       preSpeechPadFrames: 3,
       minSpeechFrames: 3,
       baseAssetPath:    VAD_WEB_CDN,
       onnxWASMBasePath: ONNX_WASM_CDN,
     });
+    _vadInstanceThreshold = threshold;
     log('✓ Silero VAD v5 初始化完成', 'ok');
   } catch (err) {
     log(`⚠ Silero VAD 載入失敗（${err.message}），降級使用 RMS VAD`, 'warn');
     _vadInstance = null;
+    _vadInstanceThreshold = null;
   } finally {
     _vadLoading = false;
   }
@@ -3837,8 +3921,13 @@ function mergeCloseSegments(segments, gapThreshold = 0.3) {
   return merged;
 }
 
-async function runVAD(samples, sampleRate = SR, threshold = 0.02) {
-  const vadInst = await getVadInstance();
+// 兩種 VAD 的閾值意義完全不同，必須各用各的：Silero 是語音「機率」（UI 可調，預設 0.5）；
+// RMS 是正規化後的「能量」（固定值）。原本把 UI 的 0.5 傳給 RMS 備援，Silero 載入失敗時幾乎偵測不到任何語音。
+const SILERO_VAD_THRESHOLD = 0.5;
+const RMS_VAD_THRESHOLD    = 0.02;
+
+async function runVAD(samples, sampleRate = SR, sileroThreshold = SILERO_VAD_THRESHOLD) {
+  const vadInst = await getVadInstance(sileroThreshold);
   if (vadInst) {
     try {
       const segments = [];
@@ -3850,13 +3939,13 @@ async function runVAD(samples, sampleRate = SR, threshold = 0.02) {
       log(`⚠ Silero VAD 執行失敗（${e.message}），降級 RMS`, 'warn');
     }
   }
-  return runVAD_rms(samples, sampleRate, threshold);
+  return runVAD_rms(samples, sampleRate);
 }
 
 /** 備援 RMS VAD（Energy-based，Silero 不可用時使用） */
-function runVAD_rms(samples, sampleRate = SR, threshold = 0.02) {
+function runVAD_rms(samples, sampleRate = SR, threshold = RMS_VAD_THRESHOLD) {
   const FRAME_SIZE = 512, HOP_SIZE = 256, PAD_FRAMES = 8, MIN_SPEECH_FRAMES = 6;
-  const numFrames = Math.floor((samples.length - FRAME_SIZE) / HOP_SIZE) + 1;
+  const numFrames = Math.max(0, Math.floor((samples.length - FRAME_SIZE) / HOP_SIZE) + 1);   // 短於一個視窗 → 0（原式會得到負數而丟 RangeError）
   const isSpeech  = new Uint8Array(numFrames);
   for (let f = 0; f < numFrames; f++) {
     const s = f * HOP_SIZE, e = Math.min(s + FRAME_SIZE, samples.length);
@@ -3886,8 +3975,9 @@ async function* audioChunkGenerator(audioOrDesc, sampleRate = SR, chunkSec = 30,
     // ── VAD 路徑：只對有語音的段落切片 ──────────────────────────
     const useVAD = document.getElementById('tog_vad')?.checked;
     if (useVAD) {
-      const vadThreshold = parseFloat(document.getElementById('p_vad_threshold')?.value) || 0.02;
-      const speechSegs = await runVAD(audioOrDesc, sampleRate, vadThreshold);
+      const uiThreshold = parseFloat(document.getElementById('p_vad_threshold')?.value);
+      const sileroThreshold = uiThreshold >= 0.1 && uiThreshold <= 0.9 ? uiThreshold : SILERO_VAD_THRESHOLD;
+      const speechSegs = await runVAD(audioOrDesc, sampleRate, sileroThreshold);
       const totalSamples = audioOrDesc.length;
 
       if (speechSegs.length === 0) {
@@ -3906,14 +3996,14 @@ async function* audioChunkGenerator(audioOrDesc, sampleRate = SR, chunkSec = 30,
           // 若此語音段比 chunkLen 短，直接當一個 chunk
           if (segLen <= chunkLen) {
             if (isCancelled) throw new Error('CANCELLED');
-            yield { data: audioOrDesc.slice(startSample, endSample), startSec: seg.start, endSec: seg.end };
+            yield { data: audioOrDesc.slice(startSample, endSample), startSec: seg.start, endSec: seg.end, leadSec: 0 };
           } else {
-            // 語音段太長，再切分
+            // 語音段太長，再切分：只有「接續視窗」開頭與前一視窗重疊（leadSec = strideSec）；每個語音段的第一個視窗是獨立起點
             let offset = startSample;
             while (offset < endSample) {
               if (isCancelled) throw new Error('CANCELLED');
               const end = Math.min(offset + chunkLen, endSample);
-              yield { data: audioOrDesc.slice(offset, end), startSec: offset / sampleRate, endSec: end / sampleRate };
+              yield { data: audioOrDesc.slice(offset, end), startSec: offset / sampleRate, endSec: end / sampleRate, leadSec: offset === startSample ? 0 : strideSec };
               if (end >= endSample) break;
               offset += chunkLen - strideLen;
             }
@@ -3928,7 +4018,7 @@ async function* audioChunkGenerator(audioOrDesc, sampleRate = SR, chunkSec = 30,
     while (offset < audioOrDesc.length) {
       if (isCancelled) throw new Error('CANCELLED');
       const end = Math.min(offset + chunkLen, audioOrDesc.length);
-      yield { data: audioOrDesc.slice(offset, end), startSec: offset / sampleRate, endSec: end / sampleRate };
+      yield { data: audioOrDesc.slice(offset, end), startSec: offset / sampleRate, endSec: end / sampleRate, leadSec: offset === 0 ? 0 : strideSec };
       if (end >= audioOrDesc.length) break;
       offset += chunkLen - strideLen;
     }
@@ -3969,9 +4059,12 @@ async function* audioChunkGenerator(audioOrDesc, sampleRate = SR, chunkSec = 30,
         pos     += toCopy;
       }
 
-      if (!shardReadFailed) {
-        yield { data: chunk, startSec: globalOffset / sampleRate, endSec: endGlobal / sampleRate };
-      }
+      // 分片讀不到（例如另一個分頁開啟本程式時清空了整個 shards 暫存）：不可悄悄丟掉這段音訊。
+      // 以 readError 標記交給 runInference，與「辨識失敗」走同一條跳過／連續失敗計數路徑（日誌可見、skippedCount 會顯示）。
+      const lead = globalOffset === 0 ? 0 : strideSec;
+      yield shardReadFailed
+        ? { data: null, readError: true, startSec: globalOffset / sampleRate, endSec: endGlobal / sampleRate, leadSec: lead }
+        : { data: chunk, startSec: globalOffset / sampleRate, endSec: endGlobal / sampleRate, leadSec: lead };
       if (endGlobal >= totalSamples) break;
       // 【Bug 1 修復】：套用 stride overlap，與 Float32Array 路徑邏輯一致
       globalOffset += chunkLen - strideLen;
@@ -4026,449 +4119,460 @@ function getOutputBasename(file) {
   return 'subtitles';
 }
 
-// ── UVR 人聲分離（MDX-Net Kim_Vocal_2）──────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+//  UVR 人聲分離（MDX-Net Kim_Vocal_2）— v24 r6 重做
+//  規格（已用真實模型＋numpy 參考實作驗證，見 tests/uvr/）：
+//   · 模型輸入／輸出：[batch, 4, 3072, 256] float32；聲道順序 [L實, L虛, R實, R虛]
+//   · n_fft 7680（＝4·4·4·4·2·3·5，非 2 的次方 → 需混合基數 FFT）、hop 1024、取前 3072 個頻格（≈17.6 kHz）、256 個影格
+//   · 分塊：CHUNK＝hop·255＝261120；兩端各去掉 TRIM＝n_fft/2＝3840 → 每塊產出 GEN＝253440 個樣本（44.1 kHz 下約 5.75 秒）
+//   · 處理：解碼成 44.1 kHz 立體聲 → Worker 內 STFT→模型→iSTFT → 人聲 44.1 kHz 立體聲 → 降混並重取樣 16 kHz 交給 Whisper
+//  限制（誠實揭露）：速度是硬限制（桌機 WASM 單執行緒約為音訊長度的 2～4 倍時間），故設音訊長度上限、低記憶體裝置不提供。
+//  模型來源：Hugging Face 鏡像（SHA-256 與 UVR 官方檔逐位元相同）。不用 GitHub Release：它不回 CORS 標頭，瀏覽器 fetch 必定失敗。
+// ══════════════════════════════════════════════════════════════════════
 const UVR_MODEL_NAME = 'Kim_Vocal_2.onnx';
-const UVR_MODEL_URL  = 'https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/Kim_Vocal_2.onnx';
+const UVR_MODEL_URL  = 'https://huggingface.co/fudan-generative-ai/hallo/resolve/main/audio_separator/Kim_Vocal_2.onnx';
+let   UVR_MODEL_BYTES  = 66759214;
+let   UVR_MODEL_SHA256 = 'ce74ef3b6a6024ce44211a07be9cf8bc6d87728cc852a68ab34eb8e58cde9c8b';
 const UVR_IDB_KEY    = 'uvr:Kim_Vocal_2';
-const ORT_WEB_CDN    = ONNX_WASM_CDN; // 沿用同一份 onnxruntime-web CDN 常數，避免與 VAD 模組各自維護版本號
+const UVR_SR         = 44100;
+const UVR_CFG        = { nFft: 7680, hop: 1024, dimF: 3072, dimT: 256 };
+let   UVR_MAX_SEC    = 1200;                    // 長度上限（秒，20 分鐘）。超過就略過人聲分離，不是失敗。取捨：太低擋掉一般 12～15 分鐘的課程錄音；太高則 44.1 kHz 立體聲解碼＋輸出約 0.85 GB／20 分鐘
+const UVR_MAX_UNKNOWN_BYTES = 150 * 1024 * 1024; // 讀不出長度時，檔案超過此大小就略過（避免解碼成 44.1 kHz 立體聲撐爆記憶體）
+const UVR_MIN_VOCAL_RATIO   = 0.01;             // 人聲 RMS 低於輸入 RMS 的 1%（−40 dB）視為模型輸出異常或根本沒有人聲
 
-// MDX-Net 參數（Kim_Vocal_2 固定值）
-const UVR_N_FFT    = 7680;
-const UVR_DIM_F    = 2048;
-const UVR_DIM_T    = 256;
-const UVR_HOP      = UVR_N_FFT / 4;    // 1920
-const UVR_SR       = 44100;
+function uvrCreateDsp(nFft, hop, dimF, dimT) {
+  const N = nFft, TRIM = N >> 1, CHUNK = hop * (dimT - 1), GEN = CHUNK - 2 * TRIM;
+  if (N % 2 !== 0 || GEN <= 0 || dimF > TRIM + 1) throw new Error('UVR 參數不合法');
 
-let _uvrWorker     = null;
-let _uvrModelReady = false;
+  // ── 混合基數 Stockham 自排序 FFT ──────────────────────────────────────
+  // nFft = 7680 = 4·4·4·4·2·3·5 不是 2 的次方，不能用常見的 radix-2 實作。
+  // 每一級：n 點分成 r 路、步距 s；輸出 y[q + s(rp+k)] = (Σj a_j·W_r^{jk})·exp(-2πi·pk/n)，a_j = x[q + s(p+jm)]。
+  const radices = [];
+  for (let m = N; m > 1;) {
+    let r;
+    if (m % 4 === 0) r = 4; else if (m % 2 === 0) r = 2; else { r = 3; while (m % r !== 0) r += 2; }
+    radices.push(r); m /= r;
+  }
+  const stages = [];
+  let maxR = 1;
+  for (let n = N, s = 1, i = 0; i < radices.length; i++) {
+    const r = radices[i], m = n / r;
+    const twR = new Float64Array(m * r), twI = new Float64Array(m * r);
+    for (let p = 0; p < m; p++) for (let k = 0; k < r; k++) { const a = -2 * Math.PI * p * k / n; twR[p * r + k] = Math.cos(a); twI[p * r + k] = Math.sin(a); }
+    const wR = new Float64Array(r), wI = new Float64Array(r);
+    for (let k = 0; k < r; k++) { const a = -2 * Math.PI * k / r; wR[k] = Math.cos(a); wI[k] = Math.sin(a); }
+    stages.push({ r, m, s, twR, twI, wR, wI });
+    if (r > maxR) maxR = r;
+    n = m; s *= r;
+  }
+  const scR = new Float64Array(N), scI = new Float64Array(N), tmpR = new Float64Array(maxR), tmpI = new Float64Array(maxR);
 
-// ── UVR Worker blob 程式碼 ──────────────────────────────────────────
-const UVR_WORKER_CODE = `
-'use strict';
-// ── 全域未捕獲錯誤攔截 ──────────────────────────────────────────────
-self.onerror = (msg, src, line, col, err) => {
-  self.postMessage({ type: 'ERROR', message: (err && err.message) ? err.message : String(msg) });
-  return true;
-};
-self.addEventListener('unhandledrejection', (e) => {
-  const reason = e.reason;
-  self.postMessage({ type: 'ERROR', message: (reason && reason.message) ? reason.message : String(reason) });
-  e.preventDefault();
-});
+  /** 就地正向 FFT（e^{-i…}，不縮放）。re、im 為長度 N 的 Float64Array。 */
+  function fft(re, im) {
+    let xr = re, xi = im, yr = scR, yi = scI;
+    for (let si = 0; si < stages.length; si++) {
+      const st = stages[si], r = st.r, m = st.m, s = st.s, twR = st.twR, twI = st.twI;
+      if (r === 4) {
+        for (let p = 0; p < m; p++) {
+          const b = p * 4, w1r = twR[b + 1], w1i = twI[b + 1], w2r = twR[b + 2], w2i = twI[b + 2], w3r = twR[b + 3], w3i = twI[b + 3];
+          for (let q = 0; q < s; q++) {
+            const i0 = q + s * p, i1 = i0 + s * m, i2 = i1 + s * m, i3 = i2 + s * m, o = q + 4 * s * p;
+            const a0r = xr[i0], a0i = xi[i0], a1r = xr[i1], a1i = xi[i1], a2r = xr[i2], a2i = xi[i2], a3r = xr[i3], a3i = xi[i3];
+            const t0r = a0r + a2r, t0i = a0i + a2i, t1r = a0r - a2r, t1i = a0i - a2i, t2r = a1r + a3r, t2i = a1i + a3i;
+            const t3r = a1i - a3i, t3i = a3r - a1r;                       // -i·(a1 - a3)
+            yr[o] = t0r + t2r; yi[o] = t0i + t2i;
+            let ur = t1r + t3r, ui = t1i + t3i; yr[o + s] = ur * w1r - ui * w1i; yi[o + s] = ur * w1i + ui * w1r;
+            ur = t0r - t2r; ui = t0i - t2i; yr[o + 2 * s] = ur * w2r - ui * w2i; yi[o + 2 * s] = ur * w2i + ui * w2r;
+            ur = t1r - t3r; ui = t1i - t3i; yr[o + 3 * s] = ur * w3r - ui * w3i; yi[o + 3 * s] = ur * w3i + ui * w3r;
+          }
+        }
+      } else if (r === 2) {
+        for (let p = 0; p < m; p++) {
+          const wr = twR[p * 2 + 1], wi = twI[p * 2 + 1];
+          for (let q = 0; q < s; q++) {
+            const i0 = q + s * p, i1 = i0 + s * m, o = q + 2 * s * p;
+            const ar = xr[i0], ai = xi[i0], br = xr[i1], bi = xi[i1], dr = ar - br, di = ai - bi;
+            yr[o] = ar + br; yi[o] = ai + bi;
+            yr[o + s] = dr * wr - di * wi; yi[o + s] = dr * wi + di * wr;
+          }
+        }
+      } else {
+        const wR = st.wR, wI = st.wI;
+        for (let p = 0; p < m; p++) {
+          for (let q = 0; q < s; q++) {
+            for (let j = 0; j < r; j++) { const ix = q + s * (p + j * m); tmpR[j] = xr[ix]; tmpI[j] = xi[ix]; }
+            const o = q + r * s * p;
+            for (let k = 0; k < r; k++) {
+              let sr = 0, sm = 0;
+              for (let j = 0; j < r; j++) { const w = (j * k) % r; sr += tmpR[j] * wR[w] - tmpI[j] * wI[w]; sm += tmpR[j] * wI[w] + tmpI[j] * wR[w]; }
+              const wr = twR[p * r + k], wi = twI[p * r + k];
+              yr[o + s * k] = sr * wr - sm * wi; yi[o + s * k] = sr * wi + sm * wr;
+            }
+          }
+        }
+      }
+      const t1 = xr; xr = yr; yr = t1;
+      const t2 = xi; xi = yi; yi = t2;
+    }
+    if (xr !== re) { re.set(xr); im.set(xi); }
+  }
 
-// 載入 onnxruntime-web WASM 後端
-let ort = null;
-let session = null;
-const ORT_CDN = '${ORT_WEB_CDN}';
+  // ── STFT／iSTFT（等同 torch.stft／istft：center=True、reflect 補齊、週期性 Hann）─────
+  const win = new Float64Array(N);
+  for (let j = 0; j < N; j++) win[j] = 0.5 - 0.5 * Math.cos(2 * Math.PI * j / N);
+  const OLA = N + hop * (dimT - 1);
+  const env = new Float64Array(OLA);
+  for (let t = 0; t < dimT; t++) for (let j = 0; j < N; j++) env[t * hop + j] += win[j] * win[j];
+  const zr = new Float64Array(N), zi = new Float64Array(N), bufL = new Float64Array(OLA), bufR = new Float64Array(OLA);
 
-async function loadOrt() {
-  if (ort) return;
+  /** L、R：長度 CHUNK。out：Float32Array(4·dimF·dimT)，排列 [L實, L虛, R實, R虛][頻格][影格]。
+   *  兩個實數聲道合併成一個複數 FFT（z = L + iR），再用共軛對稱拆開。 */
+  function stft(L, R, out) {
+    const plane = dimF * dimT;
+    for (let t = 0; t < dimT; t++) {
+      const off = t * hop - TRIM;
+      for (let j = 0; j < N; j++) {
+        let i = off + j;
+        if (i < 0) i = -i; else if (i >= CHUNK) i = 2 * (CHUNK - 1) - i;
+        zr[j] = L[i] * win[j]; zi[j] = R[i] * win[j];
+      }
+      fft(zr, zi);
+      for (let k = 0; k < dimF; k++) {
+        const k2 = k === 0 ? 0 : N - k, o = k * dimT + t;
+        out[o] = 0.5 * (zr[k] + zr[k2]);                 // L 實部
+        out[plane + o] = 0.5 * (zi[k] - zi[k2]);         // L 虛部
+        out[2 * plane + o] = 0.5 * (zi[k] + zi[k2]);     // R 實部
+        out[3 * plane + o] = 0.5 * (zr[k2] - zr[k]);     // R 虛部
+      }
+    }
+  }
+
+  /** pred：同 stft 的輸出排列。頻格 ≥ dimF 視為 0。outL、outR：長度 CHUNK（不同的 buffer）。 */
+  function istft(pred, outL, outR) {
+    const plane = dimF * dimT, inv = 1 / N;
+    bufL.fill(0); bufR.fill(0);
+    for (let t = 0; t < dimT; t++) {
+      zr.fill(0); zi.fill(0);
+      for (let k = 0; k < dimF; k++) {
+        const o = k * dimT + t, edge = k === 0 || 2 * k === N;
+        const ar = pred[o], br = pred[2 * plane + o];
+        const ai = edge ? 0 : pred[plane + o], bi = edge ? 0 : pred[3 * plane + o];   // DC／Nyquist 的虛部無意義
+        zr[k] = ar - bi; zi[k] = ai + br;                 // Z = A + iB
+        if (!edge) { zr[N - k] = ar + bi; zi[N - k] = br - ai; }   // 共軛對稱的另一半
+      }
+      fft(zi, zr);                                        // 對調實虛部＝反向 FFT（未除以 N）：L＝zr/N、R＝zi/N
+      const o = t * hop;
+      for (let j = 0; j < N; j++) { const w = win[j] * inv; bufL[o + j] += zr[j] * w; bufR[o + j] += zi[j] * w; }
+    }
+    for (let i = 0; i < CHUNK; i++) {
+      const e = env[i + TRIM];
+      if (e > 1e-11) { outL[i] = bufL[i + TRIM] / e; outR[i] = bufR[i + TRIM] / e; } else { outL[i] = 0; outR[i] = 0; }
+    }
+  }
+
+  const count = (n) => Math.max(1, Math.ceil(n / GEN));
+
+  /** 分塊分離。runModel(Float32Array[4·dimF·dimT]) → Promise<Float32Array 同尺寸>。
+   *  第 i 塊取原始訊號 [iGEN − TRIM, iGEN − TRIM + CHUNK)（界外補 0），輸出只保留中間 GEN 個樣本 [iGEN, iGEN + GEN)。 */
+  async function separate(left, right, runModel, onProgress) {
+    const n = left.length, total = count(n);
+    const outL = new Float32Array(n), outR = new Float32Array(n);
+    const cl = new Float32Array(CHUNK), cr = new Float32Array(CHUNK), wl = new Float32Array(CHUNK), wr = new Float32Array(CHUNK);
+    const spec = new Float32Array(4 * dimF * dimT);
+    let sumIn = 0, sumOut = 0;
+    for (let i = 0; i < total; i++) {
+      const base = i * GEN - TRIM;
+      for (let j = 0; j < CHUNK; j++) {
+        const x = base + j;
+        if (x >= 0 && x < n) { cl[j] = left[x]; cr[j] = right[x]; } else { cl[j] = 0; cr[j] = 0; }
+      }
+      stft(cl, cr, spec);
+      const pred = await runModel(spec);
+      let chk = 0;
+      for (let k = 0; k < pred.length; k++) chk += pred[k] * pred[k];
+      if (!Number.isFinite(chk)) throw new Error('模型輸出含非有限值（NaN／Infinity）');
+      istft(pred, wl, wr);
+      const o = i * GEN, m = Math.min(GEN, n - o);
+      for (let j = 0; j < m; j++) {
+        const a = wl[TRIM + j], b = wr[TRIM + j];
+        outL[o + j] = a; outR[o + j] = b;
+        sumOut += a * a + b * b; sumIn += left[o + j] * left[o + j] + right[o + j] * right[o + j];
+      }
+      if (!Number.isFinite(sumOut)) throw new Error('模型輸出含非有限值（NaN／Infinity）');
+      if (onProgress) onProgress(i + 1, total);
+    }
+    return { left: outL, right: outR, rmsIn: Math.sqrt(sumIn / (2 * Math.max(1, n))), rmsOut: Math.sqrt(sumOut / (2 * Math.max(1, n))), count: total };
+  }
+
+  return { fft, stft, istft, separate, count, CHUNK, GEN, TRIM };
+}
+
+// ── UVR Worker：純 JS 的 DSP（上面的 uvrCreateDsp，以 toString() 注入，主執行緒測試與 Worker 共用同一份）＋ onnxruntime-web ──
+// 訊息：INIT{model,threads}→READY；SEPARATE{left,right}→PROGRESS{done,total}…→DONE{left,right,rmsIn,rmsOut}；錯誤一律 ERROR{payload:字串}。
+const UVR_WORKER_CODE = `'use strict';${WORKER_ERROR_FORWARD}
+const CFG = ${JSON.stringify(UVR_CFG)};
+const ORT_BASE = ${JSON.stringify(ONNX_WASM_CDN)};
+const ORT_FILES = ${JSON.stringify(ORT_SCRIPT_FILES)};
+const dsp = (${uvrCreateDsp.toString()})(CFG.nFft, CFG.hop, CFG.dimF, CFG.dimT);
+// 全域名稱不可叫 ort：ORT-web 的 UMD 檔（ort.all.min.js／ort.min.js）以 var ort= 在全域宣告 ort，
+// 與這裡的 let／const 同名會讓 importScripts 以 NetworkError 失敗（1.30.0 實測；假 ORT 只指派 self.ort 屬性，測不出來）。
+let ortApi = null, session = null;
+
+async function runModel(data) {
+  const input = new ortApi.Tensor('float32', data, [1, 4, CFG.dimF, CFG.dimT]);
+  const res = await session.run({ [session.inputNames[0]]: input });
+  const out = res[session.outputNames[0]];
+  const d = out && out.dims;
+  if (!d || d.length !== 4 || d[0] !== 1 || d[1] !== 4 || d[2] !== CFG.dimF || d[3] !== CFG.dimT) {
+    throw new Error('模型輸出形狀不符：[' + (d ? Array.prototype.join.call(d, ',') : '無') + ']，預期 [1,4,' + CFG.dimF + ',' + CFG.dimT + ']');
+  }
+  const copy = new Float32Array(out.data);   // 複製：ORT 可能重用輸出緩衝
+  if (out.dispose) out.dispose();
+  if (input.dispose) input.dispose();
+  return copy;
+}
+
+self.onmessage = async (e) => {
+  const type = e.data.type, payload = e.data.payload || {};
   try {
-    importScripts(ORT_CDN + 'ort.min.js');
-  } catch (e) {
-    throw new Error('onnxruntime-web 載入失敗：' + e.message + '（CDN: ' + ORT_CDN + '）');
-  }
-  ort = self.ort;
-  if (!ort) throw new Error('onnxruntime-web 載入後 self.ort 不存在，可能版本不符');
-  ort.env.wasm.wasmPaths = ORT_CDN;
-}
-
-// ── 純 JS Hann 窗 STFT（Radix-2 Cooley-Tukey FFT）──────────────────
-function hannWindow(n) {
-  const w = new Float32Array(n);
-  for (let i = 0; i < n; i++) w[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / n));
-  return w;
-}
-
-function fft(re, im) {
-  const n = re.length;
-  // Bit-reversal permutation
-  let j = 0;
-  for (let i = 1; i < n; i++) {
-    let bit = n >> 1;
-    for (; j & bit; bit >>= 1) j ^= bit;
-    j ^= bit;
-    if (i < j) {
-      [re[i], re[j]] = [re[j], re[i]];
-      [im[i], im[j]] = [im[j], im[i]];
-    }
-  }
-  // Cooley-Tukey butterfly
-  for (let len = 2; len <= n; len <<= 1) {
-    const half = len >> 1;
-    const ang  = -2 * Math.PI / len;
-    for (let i = 0; i < n; i += len) {
-      for (let k = 0; k < half; k++) {
-        const cos = Math.cos(ang * k), sin = Math.sin(ang * k);
-        const tr = cos * re[i+k+half] - sin * im[i+k+half];
-        const ti = sin * re[i+k+half] + cos * im[i+k+half];
-        re[i+k+half] = re[i+k] - tr;  im[i+k+half] = im[i+k] - ti;
-        re[i+k]     += tr;             im[i+k]     += ti;
+    if (type === 'INIT') {
+      if (!self.ort) {
+        let last = null;
+        for (const f of ORT_FILES) { try { importScripts(ORT_BASE + f); if (self.ort) break; } catch (err) { last = err; } }
+        if (!self.ort) throw new Error('onnxruntime-web 載入失敗：' + (last && last.message ? last.message : '載入後找不到 ort'));
       }
-    }
-  }
-}
-
-function stft(mono, nFft, hop, win) {
-  const frames = Math.floor((mono.length - nFft) / hop) + 1;
-  const bins   = nFft / 2 + 1;
-  // re[frames][bins], im[frames][bins]
-  const reArr = new Array(frames), imArr = new Array(frames);
-  for (let f = 0; f < frames; f++) {
-    const re = new Float64Array(nFft), im = new Float64Array(nFft);
-    for (let i = 0; i < nFft; i++) re[i] = (mono[f * hop + i] ?? 0) * win[i];
-    fft(re, im);
-    reArr[f] = new Float32Array(bins);
-    imArr[f] = new Float32Array(bins);
-    for (let b = 0; b < bins; b++) { reArr[f][b] = re[b]; imArr[f][b] = im[b]; }
-  }
-  return { re: reArr, im: imArr, frames, bins };
-}
-
-function istft(re, im, nFft, hop, win, length) {
-  const out  = new Float32Array(length);
-  const norm = new Float32Array(length);
-  const frames = re.length;
-  for (let f = 0; f < frames; f++) {
-    // Build full symmetric spectrum
-    const fullRe = new Float64Array(nFft), fullIm = new Float64Array(nFft);
-    const bins = nFft / 2 + 1;
-    for (let b = 0; b < bins; b++) {
-      fullRe[b] = re[f][b]; fullIm[b] = im[f][b];
-      if (b > 0 && b < bins - 1) {
-        fullRe[nFft - b] = re[f][b]; fullIm[nFft - b] = -im[f][b];
-      }
-    }
-    // Inverse FFT via conjugate trick
-    for (let i = 0; i < nFft; i++) fullIm[i] = -fullIm[i];
-    fft(fullRe, fullIm);
-    for (let i = 0; i < nFft; i++) {
-      fullRe[i] /= nFft;
-      fullIm[i] /= nFft;
-    }
-    // Overlap-add with Hann window
-    const start = f * hop;
-    for (let i = 0; i < nFft && start + i < length; i++) {
-      out[start + i]  += fullRe[i] * win[i];
-      norm[start + i] += win[i] * win[i];
-    }
-  }
-  // Normalize
-  for (let i = 0; i < length; i++) if (norm[i] > 1e-8) out[i] /= norm[i];
-  return out;
-}
-
-// ── MDX-Net 推論 ───────────────────────────────────────────────────
-async function separateVocals(stereoL, stereoR, margin) {
-  const nFft = ${UVR_N_FFT}, dimF = ${UVR_DIM_F}, dimT = ${UVR_DIM_T}, hop = ${UVR_HOP};
-  const win  = hannWindow(nFft);
-
-  // Mix-to-mono for model input
-  const mono = new Float32Array(stereoL.length);
-  for (let i = 0; i < stereoL.length; i++) mono[i] = (stereoL[i] + stereoR[i]) * 0.5;
-
-  // STFT
-  const { re, im, frames, bins } = stft(mono, nFft, hop, win);
-
-  // Build magnitude spectrogram chunks for model (dimF × dimT)
-  const chunkFrames  = dimT;
-  const chunkBins    = dimF;
-  const overlap      = Math.floor(margin / hop);
-  const step         = chunkFrames - overlap;
-  const numChunks    = Math.max(1, Math.ceil((frames - overlap) / step));
-
-  // Accumulate masked magnitudes
-  const outRe = re.map(f => new Float32Array(bins));
-  const outIm = im.map(f => new Float32Array(bins));
-  const wSum  = new Float32Array(frames);
-
-  for (let c = 0; c < numChunks; c++) {
-    if (c % 4 === 0) self.postMessage({ type: 'PROGRESS', pct: Math.round(c / numChunks * 80) });
-
-    const start = c * step;
-    // Build input tensor [1, 2, dimF, dimT] (real + imag channels)
-    const tensor = new Float32Array(2 * chunkBins * chunkFrames);
-    for (let t = 0; t < chunkFrames; t++) {
-      const f = start + t;
-      const reRow = f < frames ? re[f] : new Float32Array(bins);
-      const imRow = f < frames ? im[f] : new Float32Array(bins);
-      for (let b = 0; b < chunkBins; b++) {
-        tensor[0 * chunkBins * chunkFrames + b * chunkFrames + t] = reRow[b];
-        tensor[1 * chunkBins * chunkFrames + b * chunkFrames + t] = imRow[b];
-      }
-    }
-
-    const inputTensor = new ort.Tensor('float32', tensor, [1, 2, chunkBins, chunkFrames]);
-    const feeds = {};
-    feeds[session.inputNames[0]] = inputTensor;
-    const results = await session.run(feeds);
-    const mask    = results[session.outputNames[0]].data;  // [1,2,dimF,dimT] mask
-
-    // Apply mask and accumulate with Hann-weighted overlap
-    for (let t = 0; t < chunkFrames; t++) {
-      const f = start + t;
-      if (f >= frames) continue;
-      const w = win[Math.min(t, nFft - 1)] ?? 1;
-      for (let b = 0; b < chunkBins && b < bins; b++) {
-        const mRe = mask[0 * chunkBins * chunkFrames + b * chunkFrames + t];
-        const mIm = mask[1 * chunkBins * chunkFrames + b * chunkFrames + t];
-        // Complex mask multiplication: (mRe + j*mIm) * (re + j*im)
-        outRe[f][b] += w * (mRe * re[f][b] - mIm * im[f][b]);
-        outIm[f][b] += w * (mRe * im[f][b] + mIm * re[f][b]);
-      }
-      wSum[f] += w;
-    }
-  }
-
-  // Normalize accumulated output
-  for (let f = 0; f < frames; f++) {
-    const w = wSum[f] > 1e-8 ? wSum[f] : 1;
-    for (let b = 0; b < bins; b++) { outRe[f][b] /= w; outIm[f][b] /= w; }
-  }
-
-  // iSTFT → vocal mono
-  const vocalMono = istft(outRe, outIm, nFft, hop, win, mono.length);
-
-  // Return stereo via difference: vocals = model output, background = input - vocals
-  // Use mono vocal as both channels (simplest correct approach)
-  return { vocalL: vocalMono, vocalR: vocalMono };
-}
-
-// ── Worker message handler ──────────────────────────────────────────
-self.addEventListener('message', async (e) => {
-  const { type, payload } = e.data;
-
-  if (type === 'LOAD') {
-    try {
-      await loadOrt();
-      // Receive model ArrayBuffer from main thread
-      session = await ort.InferenceSession.create(payload.modelBuffer, {
-        executionProviders: ['wasm'],
-        graphOptimizationLevel: 'all',
-        executionMode: 'sequential',
-      });
+      ortApi = self.ort;
+      ortApi.env.wasm.wasmPaths = ORT_BASE;
+      ortApi.env.wasm.numThreads = payload.threads || 1;
+      session = await ortApi.InferenceSession.create(new Uint8Array(payload.model), { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
       self.postMessage({ type: 'READY' });
-    } catch (err) {
-      self.postMessage({ type: 'ERROR', message: err.message });
-    }
-    return;
-  }
-
-  if (type === 'SEPARATE') {
-    try {
-      const { stereoL, stereoR, margin } = payload;
-      const { vocalL, vocalR } = await separateVocals(stereoL, stereoR, margin);
-      self.postMessage({ type: 'DONE', vocalL, vocalR }, [vocalL.buffer, vocalR.buffer]);
-    } catch (err) {
-      self.postMessage({ type: 'ERROR', message: err.message });
-    }
-  }
-});
-`;
-
-// ── 取得或建立 UVR Worker ───────────────────────────────────────────
-function getUvrWorker() {
-  if (_uvrWorker) return _uvrWorker;
-  const blob = new Blob([UVR_WORKER_CODE], { type: 'application/javascript' });
-  const url  = URL.createObjectURL(blob);
-  _uvrWorker = new Worker(url);
-  URL.revokeObjectURL(url);
-  // 主執行緒側攔截 UVR Worker 未捕獲錯誤
-  _uvrWorker.onerror = (e) => {
-    e.preventDefault();
-    log('⚠️ 人聲分離 Worker 錯誤：' + (e.message || '未知錯誤'), 'err');
-  };
-  return _uvrWorker;
-}
-
-// ── 從 modelFolderHandle 讀取 UVR 模型 ─────────────────────────────
-async function readUvrModelFromFolder(folderHandle) {
-  try {
-    // 遞迴搜尋：根目錄 + 常見子資料夾
-    const searchDirs = [folderHandle];
-    try { searchDirs.push(await folderHandle.getDirectoryHandle('uvr')); } catch {}
-    try { searchDirs.push(await folderHandle.getDirectoryHandle('UVR')); } catch {}
-    try { searchDirs.push(await folderHandle.getDirectoryHandle('models')); } catch {}
-
-    for (const dir of searchDirs) {
-      try {
-        const fh   = await dir.getFileHandle(UVR_MODEL_NAME);
-        const file = await fh.getFile();
-        log(`📁 從資料夾讀取 ${UVR_MODEL_NAME}（${(file.size/1024/1024).toFixed(1)}MB）`, 'ok');
-        return await file.arrayBuffer();
-      } catch {}
-    }
-  } catch {}
-  return null;
-}
-
-// ── 從 IDB 讀取 UVR 模型快取 ────────────────────────────────────────
-async function readUvrModelFromIDB() {
-  try {
-    const db  = await openIDB();
-    const tx  = db.transaction(IDB_MODEL_STORE, 'readonly');
-    const req = tx.objectStore(IDB_MODEL_STORE).get(UVR_IDB_KEY);
-    return await new Promise((res, rej) => {
-      req.onsuccess = () => res(req.result ? req.result.buffer : null);
-      req.onerror   = () => res(null);
-    });
-  } catch { return null; }
-}
-
-// ── 儲存 UVR 模型至 IDB ─────────────────────────────────────────────
-async function saveUvrModelToIDB(buffer) {
-  try {
-    const db = await openIDB();
-    const tx = db.transaction(IDB_MODEL_STORE, 'readwrite');
-    tx.objectStore(IDB_MODEL_STORE).put({ buffer }, UVR_IDB_KEY);
-    await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
-  } catch (e) { console.warn('UVR IDB 儲存失敗', e); }
-}
-
-// ── 儲存 UVR 模型至使用者資料夾 ────────────────────────────────────
-async function saveUvrModelToFolder(folderHandle, buffer) {
-  try {
-    const fh       = await folderHandle.getFileHandle(UVR_MODEL_NAME, { create: true });
-    const writable = await fh.createWritable();
-    await writable.write(buffer);
-    await writable.close();
-    log(`✓ ${UVR_MODEL_NAME} 已儲存至資料夾：${folderHandle.name}/`, 'ok');
-  } catch (e) { console.warn('UVR 模型寫入資料夾失敗', e); }
-}
-
-// ── 下載並快取 UVR 模型（主流程）───────────────────────────────────
-async function loadUvrModel(onProgress) {
-  // ① 使用者資料夾優先
-  if (modelFolderHandle) {
-    const buf = await readUvrModelFromFolder(modelFolderHandle);
-    if (buf) return buf;
-  }
-  // ② IndexedDB 快取
-  const idbBuf = await readUvrModelFromIDB();
-  if (idbBuf) {
-    log(`💾 從 IndexedDB 讀取 ${UVR_MODEL_NAME} 快取`, 'ok');
-    return idbBuf;
-  }
-  // ③ 從 GitHub 下載
-  log(`🌐 首次下載 ${UVR_MODEL_NAME}（~63MB）...`, 'info');
-  const response = await fetch(UVR_MODEL_URL);
-  if (!response.ok) throw new Error(`UVR 模型下載失敗：${response.status}`);
-  const contentLength = response.headers.get('content-length');
-  const total = contentLength ? parseInt(contentLength, 10) : 63 * 1024 * 1024;
-  const reader = response.body.getReader();
-  const chunks = [];
-  let loaded = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    loaded += value.length;
-    if (onProgress) onProgress(Math.round(loaded / total * 100));
-  }
-  const buffer = await new Blob(chunks).arrayBuffer();
-  // 非同步儲存（不阻塞推論）
-  if (modelFolderHandle) {
-    saveUvrModelToFolder(modelFolderHandle, buffer.slice(0));
-  } else {
-    saveUvrModelToIDB(buffer.slice(0));
-  }
-  return buffer;
-}
-
-// ── 執行 UVR 分離（主執行緒呼叫）──────────────────────────────────
-async function runUVR(rawAudioBuffer, margin) {
-  const worker = getUvrWorker();
-
-  // 解碼原始音訊為 44.1kHz 立體聲（使用原始 arrayBuffer）
-  let stereoL, stereoR;
-  try {
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: UVR_SR });
-    const decoded  = await audioCtx.decodeAudioData(rawAudioBuffer);
-    audioCtx.close();
-    if (decoded.numberOfChannels >= 2) {
-      stereoL = decoded.getChannelData(0).slice();
-      stereoR = decoded.getChannelData(1).slice();
-    } else {
-      stereoL = decoded.getChannelData(0).slice();
-      stereoR = stereoL.slice();
+    } else if (type === 'SEPARATE') {
+      if (!session) throw new Error('模型尚未載入');
+      const r = await dsp.separate(payload.left, payload.right, runModel, (done, total) => self.postMessage({ type: 'PROGRESS', payload: { done, total } }));
+      self.postMessage({ type: 'DONE', payload: { left: r.left, right: r.right, rmsIn: r.rmsIn, rmsOut: r.rmsOut } }, [r.left.buffer, r.right.buffer]);
     }
   } catch (err) {
-    throw new Error('UVR 音訊解碼失敗：' + err.message);
+    self.postMessage({ type: 'ERROR', payload: err && err.message ? err.message : String(err) });
   }
+};
+`;
 
-  // 若 Worker 尚未載入模型，先載入
-  if (!_uvrModelReady) {
-    const modelBuf = await loadUvrModel((pct) => {
-      setProgress(50 + pct * 0.1, `下載 UVR 模型 ${pct}%`);
-    });
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('UVR 模型載入逾時')), 120_000);
-      const onMsg = (e) => {
-        if (e.data.type === 'READY')  { clearTimeout(timer); worker.removeEventListener('message', onMsg); _uvrModelReady = true; resolve(); }
-        if (e.data.type === 'ERROR')  { clearTimeout(timer); worker.removeEventListener('message', onMsg); reject(new Error(e.data.message)); }
-      };
-      worker.addEventListener('message', onMsg);
-      worker.postMessage({ type: 'LOAD', payload: { modelBuffer: modelBuf } }, [modelBuf]);
-    });
-  }
+// ── 主執行緒：長度探測、解碼、模型取得、WAV 編碼、總流程 ─────────────────────────────
+function uvrFmtLimit(sec) { return sec % 60 === 0 ? `${sec / 60} 分鐘` : `${sec} 秒`; }
 
-  // 執行分離
-  setProgress(60, 'UVR 人聲分離中...', true);
-  return await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('UVR 推論逾時')), 600_000);
-    const onMsg = (e) => {
-      if (e.data.type === 'DONE') {
-        clearTimeout(timer);
-        worker.removeEventListener('message', onMsg);
-        resolve({ vocalL: e.data.vocalL, vocalR: e.data.vocalR });
-      } else if (e.data.type === 'ERROR') {
-        clearTimeout(timer);
-        worker.removeEventListener('message', onMsg);
-        reject(new Error(e.data.message));
-      } else if (e.data.type === 'PROGRESS') {
-        setProgress(60 + e.data.pct * 0.15, `UVR 分離中 ${e.data.pct}%`);
-      }
-    };
-    worker.addEventListener('message', onMsg);
-    worker.postMessage(
-      { type: 'SEPARATE', payload: { stereoL, stereoR, margin } },
-      [stereoL.buffer, stereoR.buffer]
-    );
+/** 以媒體元素讀取長度（不解碼）。讀不出來（格式不支援、逾時、串流）回傳 NaN。 */
+function probeMediaDuration(file, timeoutMs = 8000) {
+  return new Promise((resolve) => {
+    const el = document.createElement('video');    // video 元素同時能讀音訊檔與影片檔
+    const url = URL.createObjectURL(file);
+    let done = false;
+    const t = setTimeout(() => finish(NaN), timeoutMs);
+    function finish(v) {
+      if (done) return; done = true; clearTimeout(t);
+      el.onloadedmetadata = el.onerror = null; el.removeAttribute('src'); el.load();
+      URL.revokeObjectURL(url);
+      resolve(Number.isFinite(v) && v > 0 ? v : NaN);
+    }
+    el.preload = 'metadata'; el.muted = true;
+    el.onloadedmetadata = () => finish(el.duration);
+    el.onerror = () => finish(NaN);
+    el.src = url;
   });
 }
 
-// ── 將 Float32Array 編碼為 WAV Blob ────────────────────────────────
-function float32ToWav(pcmL, pcmR, sampleRate) {
-  const numCh = 2, bitsPerSample = 16;
-  const numSamples = pcmL.length;
-  const bytesPerSample = bitsPerSample / 8;
-  const blockAlign = numCh * bytesPerSample;
-  const byteRate   = sampleRate * blockAlign;
-  const dataSize   = numSamples * blockAlign;
-  const buf  = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buf);
-  const wr   = (pos, val, n) => {
-    if (n === 4) view.setUint32(pos, val, true);
-    else if (n === 2) view.setUint16(pos, val, true);
-  };
-  // RIFF header
-  'RIFF'.split('').forEach((c, i) => view.setUint8(i, c.charCodeAt(0)));
-  wr(4, 36 + dataSize, 4);
-  'WAVEfmt '.split('').forEach((c, i) => view.setUint8(8 + i, c.charCodeAt(0)));
-  wr(16, 16, 4); wr(20, 1, 2); wr(22, numCh, 2); wr(24, sampleRate, 4);
-  wr(28, byteRate, 4); wr(32, blockAlign, 2); wr(34, bitsPerSample, 2);
-  'data'.split('').forEach((c, i) => view.setUint8(36 + i, c.charCodeAt(0)));
-  wr(40, dataSize, 4);
-  let offset = 44;
-  for (let i = 0; i < numSamples; i++) {
-    const s16 = (ch) => Math.max(-32768, Math.min(32767, Math.round(ch[i] * 32767)));
-    view.setInt16(offset, s16(pcmL), true); offset += 2;
-    view.setInt16(offset, s16(pcmR), true); offset += 2;
+/** 解碼成 44.1 kHz 立體聲（兩個互相獨立的 Float32Array；單聲道來源複製一份；多聲道降混成單聲道再複製）。 */
+async function decodeStereo44k(file) {
+  let decoded = await decodeFileToBuffer(file, UVR_SR);
+  const rate = decoded.sampleRate, nCh = decoded.numberOfChannels;
+  let left, right;
+  if (nCh === 2) {
+    left = decoded.getChannelData(0).slice(); right = decoded.getChannelData(1).slice();
+  } else if (nCh === 1) {
+    left = decoded.getChannelData(0).slice(); right = left.slice();
+  } else {                                          // 5.1 等：人聲多在中置聲道，只取前兩軌會漏掉，故全部降混（與辨識路徑同一份降混）
+    left = mixToMono(decoded); right = left.slice();
   }
+  decoded = null;
+  if (rate !== UVR_SR) [left, right] = await resampleChannels([left, right], rate, UVR_SR);
+  return { left, right };
+}
+
+function uvrHex(buf) { return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, '0')).join(''); }
+
+/** 驗證模型位元組。通過回傳 null，否則回傳原因字串。crypto.subtle 只在安全環境（https、localhost）可用；沒有時只驗大小。 */
+async function uvrVerifyModel(buf) {
+  if (buf.byteLength !== UVR_MODEL_BYTES) return `大小不符（${buf.byteLength} ≠ ${UVR_MODEL_BYTES} 位元組）`;
+  if (UVR_MODEL_SHA256 && window.crypto?.subtle) {
+    if (uvrHex(await crypto.subtle.digest('SHA-256', buf)) !== UVR_MODEL_SHA256) return 'SHA-256 校驗不符';
+  }
+  return null;
+}
+
+async function uvrReadFromFolder() {
+  if (!modelFolderHandle) return null;
+  try {
+    for (const sub of [null, 'uvr']) {
+      try {
+        const dir = sub ? await modelFolderHandle.getDirectoryHandle(sub, { create: false }) : modelFolderHandle;
+        const fh = await dir.getFileHandle(UVR_MODEL_NAME, { create: false });
+        return await (await fh.getFile()).arrayBuffer();
+      } catch (_) { /* 這個位置沒有，換下一個 */ }
+    }
+  } catch (_) {}
+  return null;
+}
+
+async function uvrSaveToFolder(buf) {
+  if (!modelFolderHandle) return;
+  try {
+    const dir = await modelFolderHandle.getDirectoryHandle('uvr', { create: true });
+    const w = await (await dir.getFileHandle(UVR_MODEL_NAME, { create: true })).createWritable();
+    try { await w.write(buf); await w.close(); } catch (err) { await w.abort().catch(() => {}); throw err; }
+    log(`✓ UVR 模型已存入模型資料夾（${modelFolderHandle.name}/uvr/）`, 'ok');
+  } catch (err) { log(`⚠ UVR 模型存入資料夾失敗：${err.message}`, 'warn'); }
+}
+
+/** 取得模型 ArrayBuffer：模型資料夾 → IndexedDB → 下載（下載後驗證、存入 IndexedDB 與資料夾）。每個來源都驗證，不合格就換下一個。 */
+async function uvrLoadModel(onDownload) {
+  const fromFolder = await uvrReadFromFolder();
+  if (fromFolder) {
+    const bad = await uvrVerifyModel(fromFolder);
+    if (!bad) { log('UVR 模型：已從模型資料夾載入', 'ok'); return fromFolder; }
+    log(`⚠ 模型資料夾內的 UVR 模型不可用（${bad}），改用其他來源`, 'warn');
+  }
+  try {
+    const cached = await idbGet(UVR_IDB_KEY, IDB_MODEL_STORE);
+    if (cached instanceof ArrayBuffer) {
+      const bad = await uvrVerifyModel(cached);
+      if (!bad) { log('UVR 模型：已從 IndexedDB 載入（無需下載）', 'ok'); return cached; }
+      log(`⚠ IndexedDB 內的 UVR 模型不可用（${bad}），重新下載`, 'warn');
+    }
+  } catch (err) { log(`⚠ 讀取 IndexedDB 內的 UVR 模型失敗：${err.message}`, 'warn'); }
+
+  log(`UVR 模型：下載 ${UVR_MODEL_NAME}（約 ${(UVR_MODEL_BYTES / 1048576).toFixed(0)} MB，僅此一次）`, 'info');
+  const ac = new AbortController();
+  const unregister = registerCancelReject(() => ac.abort());
+  let buf;
+  try {
+    const resp = await fetch(UVR_MODEL_URL, { signal: ac.signal });
+    if (!resp.ok) throw new Error(`模型下載失敗：HTTP ${resp.status}`);
+    const bytes = new Uint8Array(UVR_MODEL_BYTES);
+    const reader = resp.body.getReader();
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (got + value.length > UVR_MODEL_BYTES) throw new Error(`模型下載失敗：大小超過預期（${UVR_MODEL_BYTES} 位元組）`);
+      bytes.set(value, got); got += value.length;
+      onDownload(got / UVR_MODEL_BYTES);
+    }
+    if (got !== UVR_MODEL_BYTES) throw new Error(`模型下載失敗：大小不符（${got} ≠ ${UVR_MODEL_BYTES} 位元組）`);
+    buf = bytes.buffer;
+  } catch (err) {
+    if (isCancelled || err.name === 'AbortError') throw new Error('CANCELLED');
+    throw err;
+  } finally {
+    unregister();
+  }
+  const bad = await uvrVerifyModel(buf);
+  if (bad) throw new Error(`模型驗證失敗：${bad}，已拒用（未存入快取）`);
+  log('✓ UVR 模型下載完成，驗證通過', 'ok');
+  try { await idbPut(UVR_IDB_KEY, buf, IDB_MODEL_STORE); } catch (err) { log(`⚠ 無法將 UVR 模型存入 IndexedDB（${err.message}），下次需重新下載`, 'warn'); }
+  await uvrSaveToFolder(buf);
+  return buf;
+}
+
+/** PCM 16-bit 立體聲 WAV。先削波到 ±1；負數乘 32768、正數乘 32767。 */
+function encodeWavPcm16(left, right, rate) {
+  const n = left.length, dataBytes = n * 4, buf = new ArrayBuffer(44 + dataBytes), v = new DataView(buf);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + dataBytes, true); str(8, 'WAVE'); str(12, 'fmt '); v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); v.setUint16(22, 2, true); v.setUint32(24, rate, true); v.setUint32(28, rate * 4, true);
+  v.setUint16(32, 4, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, dataBytes, true);
+  const q = (x) => { const c = x > 1 ? 1 : x < -1 ? -1 : x; return Math.round(c < 0 ? c * 32768 : c * 32767); };
+  for (let i = 0, o = 44; i < n; i++, o += 4) { v.setInt16(o, q(left[i]), true); v.setInt16(o + 2, q(right[i]), true); }
   return new Blob([buf], { type: 'audio/wav' });
 }
 
-async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
+/**
+ * 人聲分離總流程。成功回傳 { mono16k, wavBlob }（wantWav=false 時 wavBlob 為 null）；
+ * 略過（低記憶體、太長）或失敗回傳 null，原因寫入日誌，呼叫端改用原始音訊辨識。取消則丟出 CANCELLED。
+ * Worker 一律在 finally 終止：取消、失敗、成功都不留下佔著數百 MB 的 Worker。
+ */
+async function runVocalSeparation(file, { wantWav = true } = {}) {
+  const skip = (why) => { log(`人聲分離略過（${why}），改用原始音訊辨識`, 'warn'); return null; };
+  if (detectMemoryTier().tier === 'low') return skip('低記憶體裝置：模型推論需要約 1.5 GB 以上記憶體');
+  const dur = await probeMediaDuration(file);
+  if (isCancelled) throw new Error('CANCELLED');
+  if (dur > UVR_MAX_SEC) return skip(`音訊長度 ${formatEtaSec(dur)} 超過上限 ${uvrFmtLimit(UVR_MAX_SEC)}`);
+  if (Number.isNaN(dur) && file.size > UVR_MAX_UNKNOWN_BYTES) return skip(`無法判斷長度且檔案過大（${formatSize(file.size)}）`);
+
+  let worker = null;
+  try {
+    setProgress(50, '人聲分離：準備中...', true);
+    const model = await uvrLoadModel((f) => setProgress(50 + 2 * f, `人聲分離：下載模型 ${Math.round(f * 100)}%`));
+    if (isCancelled) throw new Error('CANCELLED');
+
+    setProgress(52, '人聲分離：解碼音訊...', true);
+    const { left, right } = await decodeStereo44k(file);
+    if (left.length / UVR_SR > UVR_MAX_SEC) return skip(`音訊長度 ${formatEtaSec(left.length / UVR_SR)} 超過上限 ${uvrFmtLimit(UVR_MAX_SEC)}`);
+    if (isCancelled) throw new Error('CANCELLED');
+
+    worker = spawnWorker(UVR_WORKER_CODE, { name: 'uvr' });
+    worker.onerror = (e) => { e.preventDefault(); };   // 錯誤由 WORKER_ERROR_FORWARD 轉成 ERROR 訊息處理
+
+    setProgress(53, '人聲分離：載入模型（首次較久）...', true);
+    const threads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 2) : 1;
+    await workerCall(worker, 'INIT', { model, threads }, 'READY', 300_000, { transfer: [model] });
+
+    const gen = UVR_CFG.hop * (UVR_CFG.dimT - 1) - UVR_CFG.nFft, total = Math.max(1, Math.ceil(left.length / gen));
+    log(`人聲分離：${formatEtaSec(left.length / UVR_SR)} 音訊，分 ${total} 段處理（每段約 ${(gen / UVR_SR).toFixed(1)} 秒）`, 'info');
+    setProgress(53, `人聲分離：共 ${total} 段，處理中（第一段最慢）...`, true);
+    const t0 = performance.now();
+    const res = await workerCall(worker, 'SEPARATE', { left, right }, 'DONE', 600_000, {
+      transfer: [left.buffer, right.buffer],
+      onProgress: ({ done, total: tot }) => {
+        const remain = done < tot ? `（剩餘約 ${formatEtaSec((performance.now() - t0) / done * (tot - done) / 1000)}）` : '';
+        setProgress(53 + 4 * done / tot, `人聲分離 ${done}/${tot} 段${remain}`);
+      },
+    });
+    const { left: vl, right: vr, rmsIn, rmsOut } = res.payload;
+    worker.terminate(); worker = null;
+
+    if (rmsIn > 1e-3 && rmsOut < rmsIn * UVR_MIN_VOCAL_RATIO) {
+      throw new Error(`模型輸出幾乎無聲（人聲／原音 RMS ＝ ${(rmsOut / rmsIn * 100).toFixed(2)}%）：音訊可能沒有人聲，或模型形狀不符`);
+    }
+    const wavBlob = wantWav ? encodeWavPcm16(vl, vr, UVR_SR) : null;
+    for (let i = 0; i < vl.length; i++) vl[i] = 0.5 * (vl[i] + vr[i]);        // 就地降混（WAV 已編碼完）
+    const mono16k = (await resampleChannels([vl], UVR_SR, SR))[0];
+    log(`✓ 人聲分離完成（${total} 段，耗時 ${formatEtaSec((performance.now() - t0) / 1000)}；人聲能量為原音的 ${(rmsOut / rmsIn * 100).toFixed(0)}%）`, 'ok');
+    return { mono16k, wavBlob };
+  } catch (e) {
+    if (e.message === 'CANCELLED') throw e;
+    log(`人聲分離失敗（${e.message}），改用原始音訊辨識`, 'warn');
+    return null;
+  } finally {
+    if (worker) worker.terminate();
+  }
+}
+
+function resetVocalDownload() {
+  const a = document.getElementById('dlVocalBtn');
+  if (!a) return;
+  if (a.href?.startsWith('blob:')) URL.revokeObjectURL(a.href);
+  a.removeAttribute('href'); a.style.display = 'none';
+}
+
+function showVocalDownload(blob, baseName) {
+  resetVocalDownload();
+  const a = document.getElementById('dlVocalBtn');
+  if (!a || !blob) return;
+  a.href = URL.createObjectURL(blob);
+  a.download = `${baseName}_vocals.wav`;
+  a.style.display = 'flex';
+}
+
+async function runInference(file, resumeFromChunk = 0, resumeChunks = [], opts = {}) {
   outputContent = '';
   setProgress(0, '準備中...', true);
   log(`▸ 開始辨識：${file.name}`, 'info');
@@ -4493,7 +4597,6 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
       setProgress(0, '下載/載入模型...', true);
 
       const dtype     = await chooseDtype(selectedModel);
-      const preferGpu = isWebGPUSupported();
 
       const progressHandler = (e) => {
         const { type: t, payload: x } = e.data;
@@ -4505,17 +4608,7 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
             setProgress(50, '載入模型至記憶體...', true);
           }
         } else if (t === 'BACKEND') {
-          const isGpu = x.backend === 'webgpu';
-          document.getElementById('statModel').textContent = isGpu ? '⚡GPU' : 'CPU';
-          // 更新 infoBox hint 顯示實際使用的 dtype
-          const hint = document.querySelector('#infoBox span');
-          if (hint) {
-            const dtypeStr = (x.dtype && typeof x.dtype === 'object')
-              ? `enc:${x.dtype.encoder_model ?? '?'} / dec:${x.dtype.decoder_model_merged ?? '?'}`
-              : (x.dtype ?? '?');
-            const backendStr = isGpu ? '⚡ WebGPU' : (x.backend === 'wasm-fallback' ? '⚠ WASM(GPU失敗)' : '⚪ WASM');
-            hint.textContent = `⚙ 量化：${dtypeStr} ／ 後端：${backendStr}`;
-          }
+          applyBackendInfo(x);
         } else if (t === 'LIB_VERSION') {
           // Worker 回報實際載入的 Transformers.js 版本
           const ver = x.version ?? '';
@@ -4527,12 +4620,7 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
 
       const loadingModelId = selectedModel;  // 捕捉此次載入的目標模型 ID
       try {
-        await workerCall(worker, 'LOAD_MODEL', {
-          modelId: loadingModelId,
-          dtype,
-          preferGpu,
-          modelFolderHandle: modelFolderHandle ?? null
-        }, 'MODEL_READY', 600000);
+        await workerCall(worker, 'LOAD_MODEL', buildLoadModelPayload(loadingModelId, dtype), 'MODEL_READY', 600000);
       } finally {
         worker.removeEventListener('message', progressHandler);
       }
@@ -4540,95 +4628,19 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
       loadedModel  = loadingModelId;  // 記錄實際載入成功的模型 ID
       log(`模型載入完成 ✓`, 'ok');
     }
+    // 本次工作使用的模型：此處與上方的載入判斷之間沒有 await，所以必等於 selectedModel；
+    // 之後使用者點選別的模型按鈕只會改 selectedModel／loadedModel，重試重載仍用這一個
+    const runModel = loadedModel;
 
     if (isCancelled) throw new Error('CANCELLED');
 
-    // ── UVR 人聲分離（可選，預設關閉）────────────────────────────
-    let uvrVocalBlob = null;
-    const uvrEnabled = document.getElementById('tog_uvr')?.checked;
-    if (uvrEnabled) {
-      try {
-        const uvrMargin = parseInt(document.getElementById('p_uvr_margin')?.value) || UVR_HOP * 4;
-        log('🎤 UVR 人聲分離啟動（Kim_Vocal_2）...', 'info');
-        setProgress(50, 'UVR 初始化中...', true);
-
-        // 讀取原始檔案 ArrayBuffer（44.1kHz 用，decodeAudio 之前）
-        const rawBuf = await file.arrayBuffer();
-        if (isCancelled) throw new Error('CANCELLED');
-
-        const { vocalL, vocalR } = await runUVR(rawBuf, uvrMargin);
-        log(`✓ UVR 人聲分離完成（${(vocalL.length / UVR_SR).toFixed(1)}s）`, 'ok');
-
-        // 建立 WAV Blob 供下載
-        uvrVocalBlob = float32ToWav(vocalL, vocalR, UVR_SR);
-
-        // 將人聲混為 mono Float32Array 取代 file 輸入
-        // 建立假 File 物件讓 decodeAudio 可解碼
-        // 方法：直接將人聲 mono 重取樣至 SR 並寫入 IDB 作為音訊來源
-        // 實作：把 vocal mono 直接用 OfflineAudioContext 降取樣，繞過 decodeAudio
-        const vocalMono = new Float32Array(vocalL.length);
-        for (let i = 0; i < vocalL.length; i++) vocalMono[i] = (vocalL[i] + vocalR[i]) * 0.5;
-
-        const targetLen  = Math.round(vocalMono.length * SR / UVR_SR);
-        const offCtx     = new OfflineAudioContext(1, targetLen, SR);
-        const srcBuf     = offCtx.createBuffer(1, vocalMono.length, UVR_SR);
-        srcBuf.copyToChannel(vocalMono, 0);
-        const src = offCtx.createBufferSource();
-        src.buffer = srcBuf;
-        src.connect(offCtx.destination);
-        src.start(0);
-        const resampled = await offCtx.startRendering();
-        const vocalAt16k = resampled.getChannelData(0).slice();
-
-        setProgress(57, '解碼音訊...', true);
-        // 直接使用人聲 16kHz mono，跳過 decodeAudio
-        const audio = vocalAt16k;
-        const monoSnapshot = null;
-        const totalSec = audio.length / SR;
-        log(`音訊（人聲）長度：${totalSec.toFixed(1)}s`, 'ok');
-
-        if (isCancelled) throw new Error('CANCELLED');
-
-        const language   = document.getElementById('language').value || undefined;
-        const task       = document.getElementById('task').value;
-        const promptText = document.getElementById('initialPrompt').value.trim() || null;
-        if (promptText) log(`💬 初始提示詞已啟用（${promptText.length} 字元）`, 'info');
-        let   CHUNK_SEC  = _dynamicChunkSec;
-        const STRIDE_SEC = 5;
-        const totalSamples = audio.length;
-        const totalAudSec  = totalSamples / SR;
-
-        _inferStart  = Date.now();
-        _inferredSec = 0;
-
-        // 儲存人聲 WAV 下載連結（推論完成後顯示）
-        window._uvrVocalBlob = uvrVocalBlob;
-
-        // 跳至推論（共用下方的 VAD/chunk 流程）
-        // 以 goto-label 模式：設定 audio 並 fall through
-        // 實作方式：用 _uvrAudio 旗標讓下方流程使用已處理的 audio
-        window._uvrAudio = audio;
-      } catch (uvrErr) {
-        if (uvrErr.message === 'CANCELLED') throw uvrErr;
-        log(`⚠ UVR 分離失敗（${uvrErr.message}），繼續使用原始音訊`, 'warn');
-        window._uvrAudio = null;
-        window._uvrVocalBlob = null;
-      }
-    } else {
-      window._uvrAudio = null;
-      window._uvrVocalBlob = null;
-    }
+    // 人聲分離（選用）：先去除背景音樂再辨識。回傳 null＝略過或失敗，沿用原始音訊（原因已寫入日誌）
+    let vocal = null;
+    if (document.getElementById('tog_uvr')?.checked) vocal = await runVocalSeparation(file, { wantWav: opts.wantVocalWav !== false });
+    if (isCancelled) throw new Error('CANCELLED');
 
     setProgress(57, '解碼音訊...', true);
-    // 若 UVR 成功，使用人聲 audio；否則走原始 decodeAudio
-    let audio, monoSnapshot;
-    if (window._uvrAudio) {
-      audio         = window._uvrAudio;
-      monoSnapshot  = null;
-      window._uvrAudio = null;
-    } else {
-      ({ audio, monoSnapshot } = await decodeAudio(file));
-    }
+    const { audio, monoSnapshot } = await decodeAudio(file, vocal?.mono16k ?? null);
     const totalSec = (audio instanceof Float32Array ? audio.length : audio.totalSamples) / SR;
     log(`音訊解碼完成，長度：${totalSec.toFixed(1)}s`, 'ok');
 
@@ -4638,14 +4650,12 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
     const task       = document.getElementById('task').value;
     const promptText = document.getElementById('initialPrompt').value.trim() || null;
     if (promptText) log(`💬 初始提示詞已啟用（${promptText.length} 字元）`, 'info');
-    let   CHUNK_SEC  = _dynamicChunkSec;
+    const CHUNK_SEC  = 30;
     const STRIDE_SEC = 5;
     const totalSamples = audio instanceof Float32Array ? audio.length : audio.totalSamples;
     const totalAudSec  = totalSamples / SR;
 
     _inferStart  = Date.now();
-    _inferredSec = 0;
-    _totalAudSec = totalAudSec;
 
     // 斷點續傳：從上次位置繼續
     const allChunks = resumeChunks.slice();
@@ -4653,6 +4663,8 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
     if (resumeFromChunk > 0) log(`▸ 從第 ${resumeFromChunk + 1} 段繼續恢復辨識`, 'ok');
 
     const gen = audioChunkGenerator(audio, SR, CHUNK_SEC, STRIDE_SEC);
+    const skipped = [];     // 最終辨識失敗而跳過的段落 { idx（0 起算）, startSec }
+    let failStreak = 0;     // 連續失敗的段落數
 
     // 跳過已完成的 chunk（若斷點續傳）
     let skipCount = resumeFromChunk;
@@ -4674,135 +4686,53 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
       setProgress(pct, `辨識中... ${seg.startSec.toFixed(0)}s / ${totalAudSec.toFixed(0)}s`);
       if (elapsed > 2) updateEta(Math.max(processedSec, 0.1), totalAudSec);
 
-      const segDataForTransfer = seg.data.slice(0);
-      const segDataForRetry    = seg.data.slice(0);
-      const transfer = segDataForTransfer.buffer;
-
-      let evt;
-      try {
-        evt = await new Promise((resolve, reject) => {
-          let chunkTimer;
-          const unregisterChunk = registerCancelReject((err) => {
-            clearTimeout(chunkTimer);
-            worker.removeEventListener('message', handler);
-            reject(err);
-          });
-          const handler = (e) => {
-            const t = e.data.type;
-            if (['CHUNK_DONE', 'CHUNK_ERROR', 'MEMORY_PRESSURE', 'DEGRADE_STRATEGY', 'ERROR'].includes(t) &&
-                (e.data.payload?.segIdx === i || t === 'ERROR' || t === 'MEMORY_PRESSURE' || t === 'DEGRADE_STRATEGY')) {
-              clearTimeout(chunkTimer);
-              unregisterChunk();
-              worker.removeEventListener('message', handler);
-              if (t === 'ERROR') reject(new Error(e.data.payload));
-              else resolve(e.data);
+      const base = { language, task, promptText, segIdx: i, startSec: seg.startSec };
+      // seg.data 永不被 transfer（每次嘗試傳複本），所以重試不需要另存 retry buffer
+      let res = seg.readError
+        ? { ok: false, kind: 'io', error: '音訊分片讀取失敗（IndexedDB 暫存可能已被其他分頁清除）' }
+        : await runChunkOnWorker(worker, base, seg.data.slice(0));
+      if (!res.ok) {
+        log(`⚠ 段落 ${i+1} 失敗（${res.kind}）：${res.error}`, 'warn');
+        if (!seg.readError && failStreak < MAX_RETRY_STREAK) {   // 讀取失敗重試沒有意義（資料已不在）
+          let reloaded = true;
+          if (res.kind !== 'other') {
+            try { worker = await reloadWorkerForRetry(res.kind, runModel); }
+            catch (reloadErr) {
+              // 重載失敗＝這次重試失敗：不放棄整個檔案（會丟掉已辨識的文字與續傳點），改走「跳過並標示」
+              if (reloadErr.message === 'CANCELLED') throw reloadErr;
+              reloaded = false;
+              worker = inferenceWorker;       // createWorker() 已終止舊 Worker 並建立新的
+              res = { ok: false, kind: res.kind, error: reloadErr.message };
+              log(`⚠ 段落 ${i+1} 重載模型失敗：${reloadErr.message}`, 'warn');
             }
-          };
-          chunkTimer = setTimeout(() => {
-            unregisterChunk();
-            worker.removeEventListener('message', handler);
-            reject(new Error(`段落推論逾時`));
-          }, 300_000);
-          worker.addEventListener('message', handler);
-          worker.postMessage({ type: 'RUN_CHUNK', payload: { audioData: transfer, language, task, promptText, segIdx: i, startSec: seg.startSec, strideSec: STRIDE_SEC } }, [transfer]);
-        });
-      } catch (segErr) {
-        if (segErr.message === 'CANCELLED') throw segErr;
+          }
+          if (isCancelled) throw new Error('CANCELLED');
+          if (reloaded) {
+            res = await runChunkOnWorker(worker, base, seg.data.slice(0));
+            log(res.ok ? `✓ 段落 ${i+1} 重試成功` : `⚠ 段落 ${i+1} 重試仍失敗（${res.kind}）：${res.error}`, res.ok ? 'ok' : 'warn');
+          }
+        }
+      }
+      if (!res.ok) {
+        skipped.push({ idx: i, startSec: seg.startSec });
+        failStreak++;
         log(`⚠ 段落 ${i+1} 跳過`, 'warn');
+        if (failStreak >= MAX_FAIL_STREAK) throw new Error(`連續 ${failStreak} 段辨識失敗，已停止（最後錯誤：${res.error}）`);
         i++; continue;
       }
+      failStreak = 0;
+      const evt = res.evt;
 
-      // ── 動態記憶體降級訊號 ──────────────────────────────────────
-      if (evt.type === 'DEGRADE_STRATEGY') {
-        const newChunkSec = Math.max(10, CHUNK_SEC - 10);
-        if (newChunkSec < CHUNK_SEC) {
-          CHUNK_SEC = newChunkSec;
-          _dynamicChunkSec = newChunkSec;
-          log(`⚠ 記憶體壓力（${Math.round(evt.payload.ratio * 100)}%），切片縮減至 ${CHUNK_SEC}s`, 'warn');
-        }
-        // DEGRADE_STRATEGY 不中斷推論，繼續等 CHUNK_DONE
-        // 重送相同 chunk：必須從 segDataForRetry 複製出新 buffer（原 transfer 已歸零）
-        const retryData2 = segDataForRetry.slice(0);
-        const retryBuf2 = retryData2.buffer;
-        if (retryBuf2.byteLength === 0) { i++; continue; }
-        try {
-          evt = await new Promise((resolve, reject) => {
-            let dt;
-            const ur = registerCancelReject((err) => { clearTimeout(dt); worker.removeEventListener('message', dh); reject(err); });
-            const dh = (e) => {
-              // 過濾掉 DEGRADE_STRATEGY，避免重複觸發降級迴圈
-              if (['CHUNK_DONE','CHUNK_ERROR','MEMORY_PRESSURE','ERROR'].includes(e.data.type) &&
-                  (e.data.payload?.segIdx === i || e.data.type === 'ERROR' || e.data.type === 'MEMORY_PRESSURE')) {
-                clearTimeout(dt); ur(); worker.removeEventListener('message', dh);
-                if (e.data.type === 'ERROR') reject(new Error(e.data.payload));
-                else resolve(e.data);
-              }
-            };
-            dt = setTimeout(() => { ur(); worker.removeEventListener('message', dh); reject(new Error('降級重試逾時')); }, 300_000);
-            worker.addEventListener('message', dh);
-            worker.postMessage({ type: 'RUN_CHUNK', payload: { audioData: retryBuf2, language, task, promptText, segIdx: i, startSec: seg.startSec, strideSec: STRIDE_SEC } }, [retryBuf2]);
-          });
-        } catch (dErr) { if (dErr.message === 'CANCELLED') throw dErr; i++; continue; }
-      }
-
-      if (evt.type === 'MEMORY_PRESSURE') {
-        log(`⚠ 記憶體壓力，重載模型...`, 'warn');
-        const dtype = await chooseDtype(selectedModel);
-        worker = createWorker();
-        inferenceWorker = worker;
-        workerReady = false;
-        await workerCall(worker, 'LOAD_MODEL', { modelId: selectedModel, dtype, preferGpu: isWebGPUSupported(), modelFolderHandle: modelFolderHandle ?? null }, 'MODEL_READY', 120000);
-        workerReady = true;
-        loadedModel = selectedModel;
-
-        const retryBuf = segDataForRetry.buffer;
-        if (retryBuf.byteLength === 0) {
-          log(`⚠ 段落 ${i+1} retry buffer 已失效，跳過`, 'warn');
-          i++; continue;
-        }
-        try {
-          evt = await new Promise((resolve, reject) => {
-            let retryTimer;
-            const unregisterRetry = registerCancelReject((err) => {
-              clearTimeout(retryTimer);
-              worker.removeEventListener('message', h);
-              reject(err);
-            });
-            retryTimer = setTimeout(() => {
-              unregisterRetry();
-              worker.removeEventListener('message', h);
-              reject(new Error('重試段落推論逾時'));
-            }, 300_000);
-            const h = (e) => {
-              if (['CHUNK_DONE','CHUNK_ERROR','ERROR'].includes(e.data.type) &&
-                  (e.data.payload?.segIdx === i || e.data.type === 'ERROR')) {
-                clearTimeout(retryTimer);
-                unregisterRetry();
-                worker.removeEventListener('message', h);
-                if (e.data.type === 'ERROR') reject(new Error(e.data.payload));
-                else resolve(e.data);
-              }
-            };
-            worker.addEventListener('message', h);
-            worker.postMessage({ type: 'RUN_CHUNK', payload: { audioData: retryBuf, language, task, promptText, segIdx: i, startSec: seg.startSec, strideSec: STRIDE_SEC } }, [retryBuf]);
-          });
-        } catch (retryErr) {
-          if (retryErr.message === 'CANCELLED') throw retryErr;
-          i++; continue;
-        }
-      }
-
-      if (evt.type === 'CHUNK_ERROR') {
-        i++; continue;
-      }
-
-      const { result, startSec: chunkStart, strideSec: chunkStride } = evt.payload;
+      const { result, startSec: chunkStart } = evt.payload;
       // result.chunks 為逐字陣列；將相鄰字組合為自然字幕句組
       // 合併條件：gap < 0.5s 且目前組合長度 < 35 字
       const segChunks = result.chunks ?? [];
       const WORD_MERGE_GAP = 0.5;   // 字間隔超過此值則斷句
       const WORD_MERGE_LEN = 35;    // 合併後字幕最大長度
-      const cleanStart = i === 0 ? 0 : chunkStride;
+      // 開頭與前一視窗重疊的秒數內的字已由前一視窗輸出，這裡丟棄以免重複。
+      // 只有「接續視窗」才有重疊（leadSec）；VAD 的每個語音段第一個視窗是獨立起點，不可丟（原本用 i === 0 判斷，
+      // VAD 開啟時每段（第一段除外）都被吃掉前 5 秒，短於 5 秒的語音段整段消失）。
+      const cleanStart = seg.leadSec ?? 0;
 
       let mergedText = '', mergedStart = null, mergedEnd = null;
       for (let wi = 0; wi < segChunks.length; wi++) {
@@ -4835,7 +4765,6 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
         allChunks.push({ text: mergedText, timestamp: [mergedStart, mergedEnd] });
       }
 
-      _inferredSec = seg.endSec ?? (seg.startSec + CHUNK_SEC);
       i++;
 
       // ── 斷點續傳：每 chunk 完成後非同步更新狀態 ─────────────────
@@ -4849,6 +4778,10 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
       }).catch(() => {});
     }
 
+    if (skipped.length > 0) {
+      const list = skipped.map((k) => `第 ${k.idx + 1} 段（${fmtTime(k.startSec).slice(0, 8)} 起）`).join('、');
+      log(`⚠ ${skipped.length} 段辨識失敗已跳過：${list}`, 'warn');
+    }
     setProgress(96, '後處理中...', false);
     resetEta();
 
@@ -4860,18 +4793,7 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
         log('說話者分割中（pyannote-segmentation-3.0）...', 'info');
         setProgress(96, '說話者分割中...', false);
 
-        // 確保模型已載入（首次需下載 ~18MB）
-        await new Promise((resolve, reject) => {
-          const w = getDiarizationWorker();
-          const timer = setTimeout(() => reject(new Error('模型載入逾時')), 120_000);
-          function h(e) {
-            if (e.data.type === 'LOADED') { clearTimeout(timer); w.removeEventListener('message', h); resolve(); }
-            else if (e.data.type === 'ERROR') { clearTimeout(timer); w.removeEventListener('message', h); reject(new Error(e.data.payload)); }
-            else if (e.data.type === 'PROGRESS') { log(`下載 pyannote: ${e.data.payload?.name ?? ''}`, 'info'); }
-          }
-          w.addEventListener('message', h);
-          w.postMessage({ type: 'LOAD' });
-        });
+        await loadDiarizationModel();
 
         // 大檔案使用 monoSnapshot（IDB 路徑已清空 audio），小檔案直接用 audio
         const monoForDiar = (monoSnapshot instanceof Float32Array)
@@ -4887,15 +4809,19 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
           }
         }
       } catch (diarErr) {
+        if (diarErr.message === 'CANCELLED') throw diarErr;     // 取消不是「分割失敗」：不可吞掉後當成功收尾
         log(`⚠ 說話者分割失敗：${diarErr.message}，跳過`, 'warn');
       }
     }
+    if (isCancelled) throw new Error('CANCELLED');
 
     const rawChunks = allChunks.filter((c, idx, arr) => idx === 0 || c.text.trim() !== arr[idx - 1].text.trim());
     // 套用說話者標籤（在後處理前，以保留 _speaker 屬性）
     const labelledChunks = diarSegments ? applyDiarizationToChunks(rawChunks, diarSegments) : rawChunks;
-    const chunks = await applyPostProcessing(labelledChunks);
-    const postCount = Object.values(getPostConfig()).filter(v => v === true).length;
+    // 設定只在此快照一次：實際套用的設定與日誌的項數必然一致（後處理期間使用者可能改動開關）
+    const postCfg = JSON.parse(JSON.stringify(getPostConfig()));
+    const chunks = await applyPostProcessing(labelledChunks, { cfg: postCfg });
+    const postCount = Object.values(postCfg).filter(v => v === true).length;
     if (postCount > 0) log(`✓ 後處理套用（${postCount} 項）`, 'ok');
     const fmt2 = document.getElementById('outFormat').value;
 
@@ -4928,7 +4854,7 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
       }
     }
 
-    return { success: true, chunks, outputContent, baseName, ext: ext2 };
+    return { success: true, chunks, outputContent, baseName, ext: ext2, skippedCount: skipped.length, vocalBlob: vocal?.wavBlob ?? null };
 
   } catch(e) {
     if (e.message === 'CANCELLED') {
@@ -4938,6 +4864,9 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
       return { success: false, cancelled: true };
     }
     log('錯誤：' + e.message, 'err');
+    if (classifyInferenceError(e.message) === 'oom' || /連續 \d+ 段辨識失敗/.test(e.message)) {
+      log('💡 可能是記憶體不足，請改用較小的模型（base 或 small）', 'warn');
+    }
     resetEta();
     setProgress(0, '失敗');
     // 錯誤時清除任務狀態
@@ -4955,12 +4884,6 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = []) {
     if (activeIdbCacheKey) {
       idbDeletePrefix(activeIdbCacheKey).catch(() => {});
       activeIdbCacheKey = null;
-    }
-    // 辨識完成後終止 UVR Worker，立即釋放 ~100MB 記憶體（模型已存 IDB/資料夾，下次重建 ~5–10s）
-    if (_uvrWorker) {
-      _uvrWorker.terminate();
-      _uvrWorker     = null;
-      _uvrModelReady = false;
     }
   }
 }
@@ -4996,12 +4919,6 @@ cancelBtn.addEventListener('click', () => {
   if (_diarizationWorker) {
     _diarizationWorker.postMessage({ type: 'CANCEL' });
   }
-  // UVR Worker：立即終止釋放記憶體（模型存於 IDB/資料夾，下次重建 Session ~5–10s）
-  if (_uvrWorker) {
-    _uvrWorker.terminate();
-    _uvrWorker      = null;
-    _uvrModelReady  = false;
-  }
 });
 
 startBtn.addEventListener('click', async () => {
@@ -5012,7 +4929,7 @@ startBtn.addEventListener('click', async () => {
 
   isRunning = true;
   isCancelled = false;
-  _dynamicChunkSec = 30; // 重設動態 chunk 大小
+  setModelButtonsDisabled(true);   // 與 isRunning 同一時刻（早於任何 await）：辨識中切換模型會釋放執行中的 Worker
   startMemMonitor();
   await acquireWakeLock(); // 🔒 啟用螢幕常亮，防止休眠中斷辨識
   startBtn.disabled = true;
@@ -5027,27 +4944,26 @@ startBtn.addEventListener('click', async () => {
   document.getElementById('btnTxt').textContent = pendingItems.length > 1 ? `批次辨識中 0/${pendingItems.length}` : '辨識中...';
   document.getElementById('progArea').classList.add('show');
   document.getElementById('resultCard').classList.remove('show');
+  resetVocalDownload();
   // 重置編輯器
+  // 隱藏編輯器並清空列表。
+  // 修正紀錄（v23 round 9）：原本對 editorToolbar／editorApplyBtn 也執行 el.innerHTML = el.innerHTML，
+  // 看似「保持內容不變」，實際會把子節點整批重新建立：bindEditorEvents() 只在載入時對「＋ 新增段落」
+  // 「↺ 還原」按鈕繫結過一次事件，被重建後這兩顆按鈕就成了沒有監聽器的新節點——只要按過一次
+  // 「開始辨識」（編輯器一定是辨識後才出現），這兩顆按鈕就永遠點不動（以真實瀏覽器實測：點「新增段落」
+  // 後列數不變）。工具列與套用按鈕的文字是靜態的、段落數由 renderEditor() 更新，本就不需要重寫 innerHTML。
   ['editorToolbar','editorList','editorApplyBtn'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) { el.style.display = 'none'; el.innerHTML = id === 'editorList' ? '' : el.innerHTML; }
+    if (el) el.style.display = 'none';
   });
+  document.getElementById('editorList')?.replaceChildren();
   _editorChunks  = [];
   _editorOriginal = [];
-  // 重置 UVR 下載按鈕
-  const dlVocalBtn = document.getElementById('dlVocalBtn');
-  if (dlVocalBtn) {
-    if (dlVocalBtn.href?.startsWith('blob:')) URL.revokeObjectURL(dlVocalBtn.href);
-    dlVocalBtn.style.display = 'none';
-  }
-  window._uvrAudio = null;
-  window._uvrVocalBlob = null;
   logBox.innerHTML = '';
   logBox.classList.remove('show');
   resetEta();
 
   let doneCount = 0, errorCount = 0, cancelledCount = 0;
-  const results = [];
 
   try { // ── try/finally 保障：任何例外都能釋放 Wake Lock 並還原 UI ──
 
@@ -5083,25 +4999,24 @@ startBtn.addEventListener('click', async () => {
       log(`▸ 斷點續傳：從第 ${resumeFrom + 1} 段恢復（已有 ${resumeChunks.length} 個結果）`, 'ok');
     }
 
-    const result = await runInference(item.file, resumeFrom, resumeChunks);
+    const result = await runInference(item.file, resumeFrom, resumeChunks, { wantVocalWav: pendingItems.length === 1 });
 
     if (result.cancelled) {
       setBatchItemStatus(item.id, 'cancelled');
       for (let j = idx + 1; j < pendingItems.length; j++) {
         setBatchItemStatus(pendingItems[j].id, 'cancelled');
       }
-      cancelledCount += pendingItems.length - idx - 1;
+      cancelledCount += pendingItems.length - idx;   // 目前這一項（idx）加上其後 length-idx-1 項；原本少算目前這一項
       break;
     } else if (result.success) {
       // 統一先儲存後處理完成的 chunks（含 applyOpenCC 等後處理結果），供結果列表「預覽」面板使用；
       // 須在 setBatchItemStatus() 觸發的重繪之前完成賦值，否則該次重繪會缺少 chunks 而不顯示預覽按鈕
       {
         const qItemForPreview = batchQueue.find(qi => qi.id === item.id);
-        if (qItemForPreview) qItemForPreview.chunks = result.chunks;
+        if (qItemForPreview) { qItemForPreview.chunks = result.chunks; qItemForPreview.skippedCount = result.skippedCount ?? 0; }
       }
       setBatchItemStatus(item.id, 'done');
       doneCount++;
-      results.push({ file: item.file, ...result });
 
       if (pendingItems.length === 1) {
         const dlBtn = document.getElementById('dlBtn');
@@ -5111,6 +5026,7 @@ startBtn.addEventListener('click', async () => {
         dlBtn.href = url;
         dlBtn.download = `${result.baseName}.${result.ext}`;
         dlBtn.textContent = `⬇ 下載 ${result.ext.toUpperCase()} 至預設路徑`;
+        showVocalDownload(result.vocalBlob, result.baseName);
 
         const dur = result.chunks.length > 0 ? (result.chunks[result.chunks.length-1].timestamp?.[1] ?? 0) : 0;
         document.getElementById('statSegs').textContent  = result.chunks.length || '1';
@@ -5122,22 +5038,6 @@ startBtn.addEventListener('click', async () => {
           ...c, timestamp: Array.isArray(c.timestamp) ? [...c.timestamp] : [0, null],
         }));
         initEditor(result.chunks, result.ext);
-
-        // UVR 人聲下載按鈕
-        const dlVocalBtn = document.getElementById('dlVocalBtn');
-        if (dlVocalBtn) {
-          if (window._uvrVocalBlob) {
-            const prevUrl = dlVocalBtn.href;
-            if (prevUrl?.startsWith('blob:')) URL.revokeObjectURL(prevUrl);
-            const vocalName = (result.baseName ?? 'vocals') + '_vocals.wav';
-            dlVocalBtn.href     = URL.createObjectURL(window._uvrVocalBlob);
-            dlVocalBtn.download = vocalName;
-            dlVocalBtn.style.display = 'flex';
-            window._uvrVocalBlob = null;
-          } else {
-            dlVocalBtn.style.display = 'none';
-          }
-        }
 
         const btnSaveToFolder = document.getElementById('btnSaveToFolder');
         btnSaveToFolder.disabled = !outFolderHandle;
@@ -5191,6 +5091,7 @@ startBtn.addEventListener('click', async () => {
 
   } finally { // ── 無論正常完成、取消或例外，都確保釋放 Wake Lock 並還原 UI ──
     isRunning = false;
+    setModelButtonsDisabled(false);   // 放在任何 await 之前：即使後面的清理丟出例外，按鈕也會恢復
     stopMemMonitor(); // 記憶體監控橫跨整個批次（非單一檔案），故與 startMemMonitor() 對應置於此
     await releaseWakeLock(); // 🔓 辨識結束，釋放螢幕常亮
     startBtn.disabled = batchQueue.filter(i => i.status === 'pending').length === 0;
@@ -5241,7 +5142,7 @@ const DEFAULT_MEDICAL_DICT = [
   { raw: "慢性阻塞性肺病|慢阻肺|COPD", zh: "慢性阻塞性肺病", en: "COPD" },
   { raw: "氣喘|哮喘|支氣管氣喘", zh: "氣喘", en: "Asthma" },
   { raw: "肺栓塞|肺血栓", zh: "肺栓塞", en: "Pulmonary Embolism" },
-  { raw: "肺結核|結核病|結核", zh: "肺結核", en: "Tuberculosis" },
+  { raw: "肺結核|結核病|結核|費肺結核|廢肺結核", zh: "肺結核", en: "Tuberculosis" },
   { raw: "胸膜炎|肋膜炎", zh: "胸膜炎", en: "Pleuritis" },
   { raw: "氣胸|肺萎陷", zh: "氣胸", en: "Pneumothorax" },
   { raw: "支氣管炎|氣管炎", zh: "支氣管炎", en: "Bronchitis" },
@@ -5270,7 +5171,7 @@ const DEFAULT_MEDICAL_DICT = [
   // 感染症
   { raw: "敗血症|敗血病|血液感染", zh: "敗血症", en: "Sepsis" },
   { raw: "敗血性休克|感染性休克", zh: "敗血性休克", en: "Septic Shock" },
-  { raw: "愛滋病|人類免疫缺乏病毒|HIV感染", zh: "HIV/愛滋病", en: "HIV/AIDS" },
+  { raw: "愛滋病|HIV感染", zh: "HIV/愛滋病", en: "HIV/AIDS" },
   { raw: "流感|流行性感冒", zh: "流行性感冒", en: "Influenza" },
   // 腫瘤科
   { raw: "惡性腫瘤|癌症|癌", zh: "惡性腫瘤", en: "Malignant Neoplasm" },
@@ -5298,7 +5199,7 @@ const DEFAULT_MEDICAL_DICT = [
   { raw: "胸部X光|胸腔X光|胸片", zh: "胸部X光", en: "Chest X-Ray" },
   { raw: "內視鏡|胃鏡|腸鏡", zh: "內視鏡", en: "Endoscopy" },
   { raw: "血小板|血栓細胞", zh: "血小板", en: "Platelet" },
-  { raw: "白血球|白細胞|嗜中性球", zh: "白血球", en: "White Blood Cell" },
+  { raw: "白血球|白細胞", zh: "白血球", en: "White Blood Cell" },
   { raw: "紅血球|紅細胞", zh: "紅血球", en: "Red Blood Cell" },
   { raw: "血紅素|血紅蛋白|血色素", zh: "血紅素", en: "Hemoglobin" },
   { raw: "肌酸酐|肌酐|血清肌酸酐", zh: "肌酸酐", en: "Creatinine" },
@@ -5316,7 +5217,7 @@ const DEFAULT_MEDICAL_DICT = [
   { raw: "B群鏈球菌|無乳鏈球菌|乙型鏈球菌", zh: "B群鏈球菌", en: "Streptococcus agalactiae" },
   { raw: "腸球菌|糞腸球菌|屎腸球菌", zh: "腸球菌", en: "Enterococcus" },
   { raw: "耐萬古黴素腸球菌|抗萬古腸球菌|VRE", zh: "耐萬古黴素腸球菌", en: "VRE" },
-  { raw: "大腸桿菌|大腸埃希菌|E. coli", zh: "大腸桿菌", en: "Escherichia coli" },
+  { raw: "大腸桿菌|大腸埃希菌|E. coli|大長感菌", zh: "大腸桿菌", en: "Escherichia coli" },
   { raw: "克雷伯氏肺炎菌|肺炎克雷伯菌|肺炎桿菌", zh: "克雷伯氏肺炎桿菌", en: "Klebsiella pneumoniae" },
   { raw: "綠膿桿菌|銅綠假單胞菌|假單胞菌", zh: "綠膿桿菌", en: "Pseudomonas aeruginosa" },
   { raw: "不動桿菌|鮑曼不動桿菌|鮑氏不動桿菌", zh: "鮑曼不動桿菌", en: "Acinetobacter baumannii" },
@@ -5341,7 +5242,7 @@ const DEFAULT_MEDICAL_DICT = [
   { raw: "淋病奈瑟菌|淋球菌|淋病菌", zh: "淋球菌", en: "Neisseria gonorrhoeae" },
   { raw: "腦膜炎奈瑟菌|腦膜炎球菌|腦膜球菌", zh: "腦膜炎奈瑟菌", en: "Neisseria meningitidis" },
   { raw: "流感嗜血桿菌|嗜血桿菌", zh: "流感嗜血桿菌", en: "Haemophilus influenzae" },
-  { raw: "砂眼披衣菌|披衣菌|衣原體", zh: "砂眼披衣菌", en: "Chlamydia trachomatis" },
+  { raw: "砂眼披衣菌|披衣菌", zh: "砂眼披衣菌", en: "Chlamydia trachomatis" },
   { raw: "肺炎黴漿菌|黴漿菌|支原體肺炎", zh: "肺炎黴漿菌", en: "Mycoplasma pneumoniae" },
   { raw: "立克次氏體|立克次體", zh: "立克次氏體", en: "Rickettsia" },
   { raw: "產超廣效β-內醯胺酶|超廣效乙醯胺酶|ESBL", zh: "產ESBL菌株", en: "ESBL-producing bacteria" },
@@ -5414,8 +5315,8 @@ const DEFAULT_MEDICAL_DICT = [
   { raw: "最低抑菌濃度|最小抑菌濃度|MIC值", zh: "最低抑菌濃度", en: "Minimum Inhibitory Concentration" },
 
   // ── 免疫學：基礎概念 ──────────────────────────────────────────────
-  { raw: "先天性免疫|非特異性免疫|固有免疫", zh: "先天性免疫", en: "Innate Immunity" },
-  { raw: "後天性免疫|適應性免疫|特異性免疫", zh: "後天性免疫", en: "Adaptive Immunity" },
+  { raw: "先天性免疫|非特異性免疫|固有免疫|先天民意|鮮天免疫|非私隱性的免疫", zh: "先天性免疫", en: "Innate Immunity" },
+  { raw: "後天性免疫|適應性免疫|特異性免疫|後天民意", zh: "後天性免疫", en: "Adaptive Immunity" },
   { raw: "體液免疫|抗體介導免疫", zh: "體液免疫", en: "Humoral Immunity" },
   { raw: "細胞媒介免疫|細胞性免疫|細胞免疫", zh: "細胞媒介免疫", en: "Cell-mediated Immunity" },
   { raw: "主要組織相容性複合體|MHC|人類白血球抗原|HLA", zh: "主要組織相容性複合體", en: "MHC / HLA" },
@@ -5459,7 +5360,7 @@ const DEFAULT_MEDICAL_DICT = [
   { raw: "B細胞受體|BCR|免疫球蛋白受體", zh: "B細胞受體", en: "B Cell Receptor" },
   { raw: "胸腺|thymus|胸腺器官", zh: "胸腺", en: "Thymus" },
   { raw: "正向選擇|胸腺正選|positive selection", zh: "正向選擇", en: "Positive Selection" },
-  { raw: "負向選擇|胸腺負選|clonal deletion", zh: "負向選擇", en: "Negative Selection" },
+  { raw: "負向選擇|胸腺負選", zh: "負向選擇", en: "Negative Selection" },
   { raw: "克隆排除|克隆刪除|clonal deletion|自我耐受", zh: "克隆排除", en: "Clonal Deletion" },
 
   // ── 免疫學：抗體與免疫球蛋白 ──────────────────────────────────
@@ -5478,7 +5379,7 @@ const DEFAULT_MEDICAL_DICT = [
 
   // ── 免疫學：超敏反應與自體免疫 ──────────────────────────────────
   { raw: "過敏反應|超敏反應|過敏", zh: "超敏反應", en: "Hypersensitivity" },
-  { raw: "第一型超敏反應|即發型超敏|過敏性休克|IgE媒介超敏", zh: "第一型超敏反應", en: "Type I Hypersensitivity" },
+  { raw: "第一型超敏反應|即發型超敏|IgE媒介超敏", zh: "第一型超敏反應", en: "Type I Hypersensitivity" },
   { raw: "第二型超敏反應|細胞毒性超敏|抗體依賴超敏", zh: "第二型超敏反應", en: "Type II Hypersensitivity" },
   { raw: "第三型超敏反應|免疫複合體超敏|血清病", zh: "第三型超敏反應", en: "Type III Hypersensitivity" },
   { raw: "第四型超敏反應|遲發型超敏|細胞媒介超敏|DTH", zh: "第四型超敏反應", en: "Type IV Hypersensitivity" },
@@ -5542,6 +5443,16 @@ const DEFAULT_MEDICAL_DICT = [
   { raw: "聚合酶連鎖反應|PCR|核酸擴增試驗", zh: "聚合酶連鎖反應", en: "PCR" },
   { raw: "即時聚合酶連鎖反應|定量PCR|real-time PCR|qPCR|RT-PCR", zh: "即時定量PCR", en: "Real-time PCR / qPCR" },
   { raw: "次世代定序|新世代定序|NGS|基因定序", zh: "次世代定序", en: "Next-Generation Sequencing" },
+  // 微免課程常見誤辨（v24 r5，handoff P4 A 組中「誤辨字串不會出現在一般文句」者；其餘排除理由見 HANDOFF-whisper-srt-v24-r5.md）
+  { raw: "維生物|維收物", zh: "微生物", en: "Microorganism" },
+  { raw: "素族", zh: "宿主", en: "Host" },
+  { raw: "表成感染|表稱感染", zh: "表淺感染", en: "Superficial Infection" },
+  { raw: "往狀內皮系統", zh: "網狀內皮系統", en: "Reticuloendothelial System" },
+  { raw: "分口傳染", zh: "糞口傳染", en: "Fecal-oral Transmission" },
+  { raw: "潛伏其|潛伏器", zh: "潛伏期", en: "Incubation Period" },
+  { raw: "分子感菌|分支感菌", zh: "分枝桿菌", en: "Mycobacterium" },
+  { raw: "民旗統", zh: "免疫系統", en: "Immune System" },
+  { raw: "干燃", zh: "感染", en: "Infection" },
 ];
 
 let medicalDict = JSON.parse(JSON.stringify(DEFAULT_MEDICAL_DICT));
@@ -5692,38 +5603,43 @@ function addPeriods(subs, language = 'zh') {
 
 /** 3b. 修正英文大小寫 */
 function fixCasing(subs) {
-  return subs.map((s, i) => {
-    let text = s.text;
-    // 句首大寫
-    text = text.replace(/^([a-z])/, c => c.toUpperCase());
-    // 若前一句以句末標點結尾，強制本句首字母大寫
-    if (i > 0) {
-      const prev = subs[i - 1].text;
-      if (/[.?!]$/.test(prev)) {
-        text = text.replace(/^([a-z])/, c => c.toUpperCase());
-      }
-    }
-    return { ...s, text };
-  });
+  // 句首大寫。（v23.2 另有「前一句以句末標點結尾就再大寫一次」的分支：句首字母已在上一步大寫，該分支永遠是空操作，r5 刪除）
+  return subs.map((s) => ({ ...s, text: s.text.replace(/^([a-z])/, (c) => c.toUpperCase()) }));
 }
 
-/** 3c. 醫學專有名詞標注 */
-function applyMedicalDict(subs, dictMap) {
-  // 用 placeholder 機制避免連鎖替換：先標記位置，最後一次性展開
-  return subs.map(s => {
+// 佔位標記（精確詞典與模糊比對共用，單一定義）。格式 \x00<私用區字元>\x00。
+// v23.2 用 \x00<十進位索引>\x00：標記內部的數字會被「純數字詞條」（精確詞典）或「純數字視窗」（模糊比對）當成可替換文字，
+// 替換後標記被拆壞，輸出殘留 NUL 與錯位的片段。私用區字元不會出現在詞典、Whisper 輸出或任何視窗比對可命中的位置。
+const GUARD_BASE = 0xE000;           // 0xE000～0xF8FF 共 6,400 個索引；單行替換次數不可能超過行長
+function guardMarker(i) { return '\x00' + String.fromCharCode(GUARD_BASE + i) + '\x00'; }
+
+/** 3c. 醫學專有名詞標注
+ *  v24：正規式與跳脫只建立一次（原本每行 × 每個 variant 都重建）；逐行流程與 v23.2 完全相同。
+ *  改為 async 並接受切片器；不傳切片器時行為等同同步。 */
+async function applyMedicalDict(subs, dictMap, slicer = NOOP_SLICER) {
+  const entries = [];
+  for (const [raw, { zh, en }] of dictMap) {
+    const escaped = raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // 避免替換已被標注的位置（已標注者後面緊接「(」；守護標記的格式見 guardMarker）
+    entries.push({ re: new RegExp(`${escaped}(?!\\s*\\()`, 'g'), result: `${zh} (${en})` });
+  }
+
+  const out = new Array(subs.length);
+  for (let k = 0; k < subs.length; k++) {
+    if (slicer.due()) await slicer.yield(k / subs.length);
+    const s = subs[k];
     let text = s.text;
-    const placeholders = [];  // [ { marker, zh, en } ]
+    // 用 placeholder 機制避免連鎖替換：先標記位置，最後一次性展開
+    const placeholders = [];  // [ { marker, result } ]
 
-    for (const [raw, { zh, en }] of dictMap) {
-      const escaped = raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      // 避免替換已被標注的位置（marker 格式為 \x00N\x00）
-      const re = new RegExp(`${escaped}(?!\\s*\\()`, 'g');
-      if (!re.test(text)) continue;
-      re.lastIndex = 0;
+    for (const e of entries) {
+      e.re.lastIndex = 0;                 // 帶 g 旗標的 test() 會推進 lastIndex，每行每條都要歸零
+      if (!e.re.test(text)) continue;
+      e.re.lastIndex = 0;
 
-      const marker = `\x00${placeholders.length}\x00`;
-      placeholders.push({ marker, result: `${zh} (${en})` });
-      text = text.replace(re, marker);
+      const marker = guardMarker(placeholders.length);
+      placeholders.push({ marker, result: e.result });
+      text = text.replace(e.re, marker);
     }
 
     // 展開所有 placeholder（由後往前避免 index 錯位）
@@ -5731,8 +5647,9 @@ function applyMedicalDict(subs, dictMap) {
       text = text.split(placeholders[i].marker).join(placeholders[i].result);
     }
 
-    return { ...s, text };
-  });
+    out[k] = { ...s, text };
+  }
+  return out;
 }
 
 /** 工具：重新給 index */
@@ -5944,40 +5861,116 @@ function levenshtein(a, b) {
 }
 
 /**
- * 注音音節序列的 Levenshtein（以 '|' 分隔的音節為單位）
- * 比字元級 Levenshtein 更能反映聲學距離
+ * 字串的「相似度剖面」：字元層保留原字串（Levenshtein 以 UTF-16 單位計算），注音層為音節陣列。
+ * 效能修正（v23 round 9）：滑動視窗比對時，每個「視窗 × 候選詞」組合原本都會重新把兩邊字串轉注音、
+ * 切音節，但候選詞的剖面在整次比對中永遠不變、同一個視窗字串也會與數百個候選詞重複比較。
+ * 改為各算一次（候選詞：每次執行一次；視窗：每行字幕以字串為鍵快取）。數值與原公式逐位元相同。
  */
-function bopomofoLevenshtein(a, b) {
-  const sa = a.split('|'), sb = b.split('|');
-  return levenshtein(sa, sb);
+function phoneticProfile(str) {
+  const syl = toBopomofo(str).split('|');
+  return { str, syl, sylSet: new Set(syl) };
+}
+
+// 綜合相似度的權重：唯一定義處，公式與下方的上界估計共用，避免其中一處改了另一處沒跟上
+const PHON_WEIGHT = 0.7;   // 注音聲學距離
+const CHAR_WEIGHT = 0.3;   // 字元 Levenshtein（兼顧字形相似字）
+
+/**
+ * 綜合相似度（唯一公式）：PHON_WEIGHT × 注音聲學距離 + CHAR_WEIGHT × 字元 Levenshtein
+ * 讓同音異字得高分。
+ */
+function phoneticSimilarityFromProfiles(pa, pb) {
+  const maxCharLen = Math.max(pa.str.length, pb.str.length);
+  if (maxCharLen === 0) return 1;
+  const charSim = 1 - levenshtein(pa.str, pb.str) / maxCharLen;
+  const maxPhLen = Math.max(pa.syl.length, pb.syl.length);
+  const phonSim = maxPhLen === 0 ? 1 : 1 - levenshtein(pa.syl, pb.syl) / maxPhLen;
+  return CHAR_WEIGHT * charSim + PHON_WEIGHT * phonSim;
 }
 
 /**
- * 綜合相似度：0.7 × 注音聲學距離 + 0.3 × 字元 Levenshtein
- * 讓同音異字得高分，兼顧字形相似字
+ * phoneticSimilarityFromProfiles 的「便宜上界」：一定 ≥ 真實相似度，可用來提早排除不可能達標的組合。
+ * 依據：Levenshtein 距離 ≥ max(m,n) − 相同元素數，所以 (1 − 距離/max) ≤ 相同元素數/max。
+ * 相同音節數以「視窗音節落在候選詞音節集合內的個數」估計（重複時只會高估，故仍是上界），
+ * 字元層則取最寬鬆的 1。只做 Set 查詢、不配置陣列，比完整 DP 便宜一個數量級。
  */
-function phoneticSimilarity(a, b) {
-  if (!a || !b) return 0;
-  const maxCharLen = Math.max(a.length, b.length);
-  if (maxCharLen === 0) return 1;
-
-  // 字元層面
-  const charSim = 1 - levenshtein(a, b) / maxCharLen;
-
-  // 注音層面
-  const bA = toBopomofo(a), bB = toBopomofo(b);
-  const sA = bA.split('|'), sB = bB.split('|');
-  const maxPhLen = Math.max(sA.length, sB.length);
-  const phonSim = maxPhLen === 0 ? 1 : 1 - bopomofoLevenshtein(bA, bB) / maxPhLen;
-
-  return 0.3 * charSim + 0.7 * phonSim;
+function phoneticSimilarityUpperBound(pa, pb) {
+  const maxPhLen = Math.max(pa.syl.length, pb.syl.length);
+  if (maxPhLen === 0) return 1;
+  let shared = 0;
+  for (const x of pa.syl) if (pb.sylSet.has(x)) shared++;
+  return CHAR_WEIGHT + PHON_WEIGHT * Math.min(shared, pb.syl.length) / maxPhLen;
 }
+
+// 模糊詞典比對的相似度門檻預設值：**唯一定義處**。以下三處都由它而來，不再各自寫數字：
+//   ① applyFuzzyMedicalDict 的預設參數  ② collectPostConfig 在輸入框為空／非數字時的後備值
+//   ③ 頁面載入時設定輸入框的初始值（HTML 已不含 value 屬性）
+// 歷史（v23.2 前）：函式預設 0.75、UI 與後備值 0.65，兩套數字並存。以真實瀏覽器對內建詞典掃描 0.55～0.90
+// （語料：由 App 自己的注音分組表產生的 503 個同音異字錯誤 + 83 句不含詞典術語的一般／醫學口語）：
+//   0.55/0.60/0.65 → 誤改一般句子 15/11/8 句，同音異字改正率 72%/75%/80%；
+//   0.70～0.85     → 誤改 0 句，改正率 86%/90%/92%/93%；
+//   0.90           → 2、3 字詞的同音異字全部漏掉（改正率 77%，文件化案例 1/2）。
+// 0.75 位於「零誤改」平台中段（距誤改懸崖 0.05、距召回懸崖 0.10）；0.85 雖改正率最高，但兩字詞的得分
+// 恰為 0.85，靠浮點相等才通過，過於貼邊。語料為合成資料，非真實逐字稿，見 CHANGELOG 第十輪。
+const FUZZY_THRESHOLD_DEFAULT = 0.75;
 
 /**
  * 聲學模糊匹配 v2：注音聲學距離驅動的滑動視窗替換
  * 對「具勢細胞」→「巨噬細胞」、「心飢哽塞」→「心肌梗塞」等同音異字有效
+ *
+ * 修正紀錄（v23 round 9）：本函式原本在滑動視窗內有一行 window.includes('\x00') 的略過判斷，
+ * 是從 applyMedicalDict() 的 placeholder 機制照抄來的——但只抄了「檢查」那一半，從未像 applyMedicalDict
+ * 那樣真的把已處理的片段換成 \x00N\x00 marker（v23 當時的格式；v24 起改為 \x00＋私用區字元＋\x00，見 guardMarker），導致該判斷永遠不成立。後果（以真實原始碼＋內建詞典重現）：
+ *   1. 剛替換上去的「巨噬細胞 (Macrophage)」會被後面的候選詞再次模糊比對、連鎖蓋掉，
+ *      例：「今天討論具勢細胞」→「今天討論具巨噬白紅血球 (Red Blood Cell) (White Blood Cell) (Macrophage)」
+ *   2. 文字裡本來就正確的術語也會被別的候選詞咬進去，
+ *      例（v23.1 以前 UI 預設門檻為 0.65 時）：「巨噬細胞吞噬病原體」→「巨噬白紅血球 (Red Blood Cell) … 吞噬病砂眼披衣菌 (…)」
+ * 現改為與 applyMedicalDict 相同的手法真正實作保護：先把文字中已存在的標準詞遮成 marker、每次替換
+ * 的結果也遮成 marker，滑動視窗遇到含 \x00 的視窗即略過，最後統一展開。原有「文字已含該術語（或其
+ * 標準詞）就整個候選詞略過」的判斷語意不變（改以展開後的原文判斷）。
  */
-function applyFuzzyMedicalDict(subs, dict, threshold = 0.75) {
+// ── 模糊比對候選詞預篩（v24；輸出與 v23.2 逐字相同）─────────────────────
+// 原理：v23.2 的便宜上界 UB = CHAR_WEIGHT + PHON_WEIGHT × min(shared,|c.syl|) / max(|w.syl|,|c.syl|)；
+// UB < threshold − 1e-9 的視窗必然不會被替換。通過上界需要 shared ≥ r × |c.syl|（r 見下），
+// 而任何視窗的 shared 都不超過「整行中音節屬於該候選詞音節集合的位置數」(hits)。
+// 故 hits < need ⇒ 該候選詞對這一行必然不替換，可整個略過。
+// 不安全集合（無法證明上述對應關係者）直通原流程：
+//   代理對（UTF-16 單位 vs 碼點不一致）、數字與 NUL（v23.2 的守護標記 \x00N\x00 內容可能成為純數字視窗；v24 標記改用私用區字元，仍保守地把 NUL 與數字列入不安全集合）、
+//   '|'（toBopomofo 以 '|' 連接再切開，會產生空字串音節）。
+const FUZZY_UNSAFE_RE = /[\uD800-\uDFFF0-9\x00|]/;
+
+function buildFuzzyIndex(candidates, threshold) {
+  const r = (threshold - 1e-9 - CHAR_WEIGHT) / PHON_WEIGHT;
+  const n = candidates.length;
+  const need = new Int32Array(n);
+  const unsafe = new Uint8Array(n);
+  const index = new Map();                       // 音節 → 候選詞序號陣列
+  for (let ci = 0; ci < n; ci++) {
+    const c = candidates[ci];
+    unsafe[ci] = FUZZY_UNSAFE_RE.test(c.term) ? 1 : 0;
+    // 1e-6：寧可少剪、不可多剪。r ≤ 0（門檻 ≤ CHAR_WEIGHT）時 need = 0，等同不預篩。
+    need[ci] = r <= 0 ? 0 : Math.ceil(r * c.prof.syl.length - 1e-6);
+    for (const syl of c.prof.sylSet) {
+      let a = index.get(syl);
+      if (!a) index.set(syl, (a = []));
+      a.push(ci);
+    }
+  }
+  return { need, unsafe, index };
+}
+
+/** 逐行計數：hits[ci] ＝ 該行中音節屬於候選詞 ci 音節集合的「碼點位置數」。
+ *  for...of 以碼點走，與 toBopomofo 的 Array.from 一致；音節＝BOPOMOFO_MAP 的值，無映射則為字元本身。 */
+function countCandidateHits(text, idx, hits) {
+  hits.fill(0);
+  for (const ch of text) {
+    const lst = idx.index.get(BOPOMOFO_MAP.get(ch) ?? ch);
+    if (lst) for (let k = 0; k < lst.length; k++) hits[lst[k]]++;
+  }
+}
+
+/** 聲學模糊匹配。v24：async＋切片器＋候選詞預篩；逐行替換流程與 v23.2 完全相同。 */
+async function applyFuzzyMedicalDict(subs, dict, threshold = FUZZY_THRESHOLD_DEFAULT, slicer = NOOP_SLICER) {
   if (!dict || dict.length === 0) return subs;
 
   // 建立候選術語列表（zh + raw 所有 variants）
@@ -5985,20 +5978,58 @@ function applyFuzzyMedicalDict(subs, dict, threshold = 0.75) {
   for (const entry of dict) {
     const targets = [entry.zh, ...entry.raw.split('|').map(v => v.trim()).filter(Boolean)];
     for (const t of targets) {
-      if (t && t.length >= 2) candidates.push({ term: t, zh: entry.zh, en: entry.en });
+      if (t && t.length >= 2) candidates.push({ term: t, zh: entry.zh, en: entry.en, prof: phoneticProfile(t) });
     }
   }
   // 按長度由長到短，避免短詞先蓋掉長詞
   candidates.sort((a, b) => b.term.length - a.term.length);
+  // 精確詞典已標注好的整段「標準詞 (英文)」：必須整段保護。否則英文標注會被當成一般文字比對、被候選詞蓋掉
+  // （v23.2 起即有：「IgG (Immunoglobulin G)」→「IgG (抗體 (Antibody / Immunoglobulin)n G)」；預設詞典 295 筆有 17 筆會這樣被改壞）
+  const standardAnnotations = [...new Set(dict.filter(e => e.zh && e.en).map(e => `${e.zh} (${e.en})`))]
+    .sort((a, b) => b.length - a.length);
+  // 只保護「標準詞 zh」。raw 別稱（同音異字的已知錯誤寫法）正是要被改正的對象，不可遮
+  const standardTerms = [...new Set(dict.map(e => e.zh).filter(z => z && z.length >= 2))]
+    .sort((a, b) => b.length - a.length);
 
-  return subs.map(s => {
+  const idx = buildFuzzyIndex(candidates, threshold);
+  const hits = new Uint32Array(candidates.length);
+
+  const out = new Array(subs.length);
+  for (let k = 0; k < subs.length; k++) {
+    if (slicer.due()) await slicer.yield(k / subs.length);
+    const s = subs[k];
     let text = s.text;
+    const winProfiles = new Map();   // 視窗字串 → 剖面（同一行內會與數百個候選詞重複比較）
 
-    for (const { term, zh, en } of candidates) {
+    // marker 機制：guarded[i] 為被保護的原文，text 內以 guardMarker(i) 代替
+    const guarded = [];
+    const guard = (str) => { guarded.push(str); return guardMarker(guarded.length - 1); };
+    const expand = (t) => {
+      for (let i = guarded.length - 1; i >= 0; i--) t = t.split(guardMarker(i)).join(guarded[i]);
+      return t;
+    };
+
+    // 先保護：已標注好的「標準詞 (英文)」整段，再保護文字中已經是「標準詞」的片段（長詞優先，故「急性心肌梗塞」會先於「心肌梗塞」被遮）
+    if (text.includes(' (')) {   // 標注一定含「 (」；多數行沒有，整段略過
+      for (const ann of standardAnnotations) {
+        if (text.includes(ann)) text = text.split(ann).join(guard(ann));
+      }
+    }
+    for (const term of standardTerms) {
+      if (text.includes(term)) text = text.split(term).join(guard(term));
+    }
+
+    countCandidateHits(text, idx, hits);
+
+    for (let ci = 0; ci < candidates.length; ci++) {
+      const { term, zh, en, prof } = candidates[ci];
       const tLen = term.length;
       if (tLen < 2) continue;
-      if (text.includes(term)) continue;
-      if (text.includes(zh)) continue;
+      if (!idx.unsafe[ci] && hits[ci] < idx.need[ci]) continue;      // 預篩：必然不替換者整個略過
+      if (slicer.due()) await slicer.yield(k / subs.length);          // 候選詞層級讓出：單行最壞情況也不超過預算
+      const plain = guarded.length ? expand(text) : text;
+      if (plain.includes(term)) continue;
+      if (plain.includes(zh)) continue;
 
       // 滑動視窗：±1 字元長度；使用注音相似度取代純字元比較
       let replaced = false;
@@ -6008,13 +6039,15 @@ function applyFuzzyMedicalDict(subs, dict, threshold = 0.75) {
         while (start <= text.length - winLen) {
           const window = text.slice(start, start + winLen);
           if (window.includes('\x00')) { start++; continue; }
-          const sim = phoneticSimilarity(window, term);
+          let wp = winProfiles.get(window);
+          if (!wp) { wp = phoneticProfile(window); winProfiles.set(window, wp); }
+          // 先用便宜上界排除不可能達標者（容差 1e-9 防浮點誤差；上界 < 門檻則真實值必然 < 門檻，結果不變）
+          if (phoneticSimilarityUpperBound(wp, prof) < threshold - 1e-9) { start++; continue; }
+          const sim = phoneticSimilarityFromProfiles(wp, prof);
           if (sim >= threshold) {
-            const replacement = `${zh} (${en})`;
-            text = text.slice(0, start) + replacement + text.slice(start + winLen);
-            start += replacement.length;
+            text = text.slice(0, start) + guard(`${zh} (${en})`) + text.slice(start + winLen);
             replaced = true;
-            break;
+            break; // 外層 for 因 replaced=true 隨即結束，start 不再被讀取
           } else {
             start++;
           }
@@ -6022,8 +6055,9 @@ function applyFuzzyMedicalDict(subs, dict, threshold = 0.75) {
       }
     }
 
-    return { ...s, text };
-  });
+    out[k] = { ...s, text: guarded.length ? expand(text) : text };
+  }
+  return out;
 }
 
 /** 幻覺偵測警示（基於 Frieske & Shi 2024 方法論）
@@ -6102,7 +6136,7 @@ function detectHallucinations(subs, gapThreshold = 3.0, speedThreshold = 12) {
     }
 
     // 症狀 4：孤立非語言音（僅有括號內容）
-    if (/^[\[(（「【].+[\])）」】]$/.test(text.trim())) {
+    if (/^[[(（「【].+[\])）」】]$/.test(text.trim())) {
       reasons.push('孤立非語言音');
     }
 
@@ -6121,10 +6155,51 @@ function applyHallucinationWarning(subs) {
     : s
   );
 }
-async function applyPostProcessing(chunks) {
+// ── 後處理時間切片（v24）──────────────────────────────────────────────
+// 長影片的模糊詞典比對在主執行緒同步執行會凍結畫面（v23.2：1 小時檔最長 10 秒）。
+// 切片器讓出主執行緒給輸入與繪製；讓出方式為 MessageChannel（單次 0.023 ms；setTimeout(0) 被夾到 4 ms）。
+// 預算 8 ms：實測最大停頓 41 ms，總耗時與 16 ms 預算相同。
+const POST_SLICE_BUDGET_MS = 8;
+
+function yieldToMain() {
+  return new Promise((resolve) => {
+    const c = new MessageChannel();
+    c.port1.onmessage = () => { c.port1.close(); resolve(); };
+    c.port2.postMessage(0);
+  });
+}
+
+/** 切片器：熱路徑只呼叫 due()（一次減法）；due() 為 true 才 await yield()。可注入假時鐘與取消檢查供測試。 */
+function createSlicer({
+  budgetMs = POST_SLICE_BUDGET_MS,
+  now = () => performance.now(),
+  yieldFn = yieldToMain,
+  checkCancel = () => { if (isCancelled) throw new Error('CANCELLED'); },
+  onYield = null,
+} = {}) {
+  let sliceStart = now();
+  const stats = { yields: 0 };
+  return {
+    stats,
+    due() { return now() - sliceStart >= budgetMs; },
+    async yield(frac) {
+      await yieldFn();
+      checkCancel();            // 讓出之後才檢查：取消鈕的 click 事件就在這段空檔被處理
+      stats.yields++;
+      sliceStart = now();
+      if (onYield) onYield(stats, frac);
+    },
+  };
+}
+const NOOP_SLICER = { stats: { yields: 0 }, due: () => false, async yield() {} };
+
+async function applyPostProcessing(chunks, opts = {}) {
   if (!chunks || chunks.length === 0) return chunks;
 
-  const cfg = getPostConfig();
+  // 設定與詞典快照：切片後使用者可在後處理期間編輯詞典、切換開關（v23.2 是同步的，期間無法操作）。
+  // medicalDict 在 UI 端是就地修改（splice／改欄位），不快照會讀到半改狀態。
+  const cfg = opts.cfg ?? JSON.parse(JSON.stringify(getPostConfig()));   // opts.cfg：呼叫端已快照（日誌項數與實際套用一致）
+  const dictSnap = JSON.parse(JSON.stringify(medicalDict));
   if (!Object.values(cfg).some(v => v !== false && v !== null)) return chunks;
 
   let subs = chunksToSubs(chunks);
@@ -6146,13 +6221,24 @@ async function applyPostProcessing(chunks) {
       log(`⚠ 簡繁正規化載入失敗：${openccErr.message}，跳過`, 'warn');
     }
   }
+  // 進度（96→99%）：DOM 寫入節流 ≥100 ms，避免每 8 ms 一次的版面重排
+  let stage = { from: 96, to: 96.3, label: '詞典比對' }, lastPaint = 0;
+  const slicer = opts.slicer ?? createSlicer({
+    onYield: (_stats, frac = 0) => {
+      const t = performance.now();
+      if (t - lastPaint < 100) return;
+      lastPaint = t;
+      setProgress(stage.from + (stage.to - stage.from) * frac, `後處理中… ${stage.label} ${Math.round(frac * 100)}%`, false);
+    },
+  });
   if (cfg.medical) {
-    const dictMap = buildDictMap(medicalDict);
-    subs = applyMedicalDict(subs, dictMap);
+    const dictMap = buildDictMap(dictSnap);
+    subs = await applyMedicalDict(subs, dictMap, slicer);
   }
   // 聲學模糊匹配：在精確匹配後執行，捕捉同音異字
   if (cfg.fuzzy) {
-    subs = applyFuzzyMedicalDict(subs, medicalDict, cfg.fuzzyThreshold);
+    stage = { from: 96.3, to: 99, label: '模糊比對' };
+    subs = await applyFuzzyMedicalDict(subs, dictSnap, cfg.fuzzyThreshold, slicer);
   }
 
   // 幻覺偵測：在所有後處理完成後執行（保留最終文字狀態）
@@ -6183,7 +6269,7 @@ function getPostConfig() {
     opencc:         document.getElementById('tog_opencc')?.checked ?? false,
     medical:        document.getElementById('tog_medical').checked,
     fuzzy:          document.getElementById('tog_fuzzy')?.checked ?? false,
-    fuzzyThreshold: parseFloat(document.getElementById('p_fuzzy_threshold')?.value) || 0.65,
+    fuzzyThreshold: parseFloat(document.getElementById('p_fuzzy_threshold')?.value) || FUZZY_THRESHOLD_DEFAULT,
     hallucination:  document.getElementById('tog_hallucination')?.checked ?? false,
     hallucGap:      parseFloat(document.getElementById('p_halluc_gap')?.value) || 3.0,
     hallucSpeed:    parseFloat(document.getElementById('p_halluc_speed')?.value) || 12,
@@ -6201,6 +6287,9 @@ document.getElementById('postPanelHeader').addEventListener('click', () => {
 document.getElementById('audioEnhanceHeader').addEventListener('click', () => {
   document.getElementById('audioEnhancePanel').classList.toggle('open');
 });
+
+// 模糊門檻輸入框的初始值來自 FUZZY_THRESHOLD_DEFAULT（HTML 不再寫死，避免出現第二份預設值）
+{ const el = document.getElementById('p_fuzzy_threshold'); if (el) el.value = FUZZY_THRESHOLD_DEFAULT; }
 
 // Toggle → 顯示/隱藏參數區，並更新 badge
 function updatePostBadge() {
@@ -6234,7 +6323,6 @@ const toggleParamMap = {
   tog_medical:      'dictEditor',
   tog_fuzzy:        'params_fuzzy',
   tog_vad:          'params_vad',
-  tog_uvr:          'params_uvr',
   tog_hallucination:'params_hallucination',
 };
 
@@ -6327,13 +6415,27 @@ function renderDictTable() {
   });
 }
 
+// 詞典條目的唯一驗證／正規化處：手動新增、JSON 匯入、CSV／TSV 匯入共用（原本三處各寫一套，
+// JSON 匯入只檢查「真值」：raw 為數字時能通過，之後 buildDictMap 的 entry.raw.split 會丟 TypeError，
+// 辨識全部完成後的後處理才失敗）。合格＝三欄皆為字串、去前後空白後非空，且 raw 至少有一個非空別稱。
+function normalizeDictEntry(x) {
+  if (!x || typeof x !== 'object') return null;
+  if (typeof x.raw !== 'string' || typeof x.zh !== 'string' || typeof x.en !== 'string') return null;
+  const e = { raw: x.raw.trim(), zh: x.zh.trim(), en: x.en.trim() };
+  if (!e.raw || !e.zh || !e.en) return null;
+  if (!e.raw.split('|').some(v => v.trim())) return null;
+  return e;
+}
+
 // 新增條目
 document.getElementById('btnDictAdd').addEventListener('click', () => {
-  const raw = document.getElementById('dictAddRaw').value.trim();
-  const zh  = document.getElementById('dictAddZh').value.trim();
-  const en  = document.getElementById('dictAddEn').value.trim();
-  if (!raw || !zh || !en) { log('請填寫原始字、標準術語與英文對照', 'warn'); return; }
-  medicalDict.push({ raw, zh, en });
+  const entry = normalizeDictEntry({
+    raw: document.getElementById('dictAddRaw').value,
+    zh:  document.getElementById('dictAddZh').value,
+    en:  document.getElementById('dictAddEn').value,
+  });
+  if (!entry) { log('請填寫原始字、標準術語與英文對照', 'warn'); return; }
+  medicalDict.push(entry);
   renderDictTable();
   ['dictAddRaw','dictAddZh','dictAddEn'].forEach(id => { document.getElementById(id).value = ''; });
 });
@@ -6347,8 +6449,12 @@ document.getElementById('btnDictReset').addEventListener('click', () => {
 });
 
 // ── 詞典匯出（JSON / CSV / TSV）────────────────────────────────
+// CSV／TSV 標題列：匯出與匯入共用同一份。匯入時據此跳過標題列——原本只跳過「第一欄不含中文」的標題列，
+// 本程式自己匯出的標題列含中文，重新匯入會被當成一筆詞條（實測 295 → 296，並讓「分隔）」之類片段被替換）。
+const DICT_CSV_HEADER = ['原始字（|分隔）', '標準中文術語', '英文對照'];
+
 function dictToCsv(sep = ',') {
-  const header = `原始字（|分隔）${sep}標準中文術語${sep}英文對照`;
+  const header = DICT_CSV_HEADER.join(sep);
   const rows = medicalDict.map(e => {
     const q = (v) => `"${String(v).replace(/"/g, '""')}"`;
     return [q(e.raw), q(e.zh), q(e.en)].join(sep);
@@ -6411,9 +6517,11 @@ function importDelimited(text, sep) {
     const cols = parseCsvLine(line, sep);
     if (cols.length < 3) continue;
     const [rawVal, zhVal, enVal] = cols.map(c => c.trim());
-    // 跳過標題列：第一列若第一欄不含 CJK 且第三欄含有英文字母，視為標題列
-    if (i === 0 && !/[\u4e00-\u9fff]/.test(rawVal) && /[a-zA-Z]/.test(enVal)) continue;
-    if (rawVal && zhVal && enVal) entries.push({ raw: rawVal, zh: zhVal, en: enVal });
+    // 跳過標題列：① 本程式匯出的標題列（DICT_CSV_HEADER）；② 第一列若第一欄不含 CJK 且第三欄含有英文字母（英文標題列）
+    if (i === 0 && ((rawVal === DICT_CSV_HEADER[0] && zhVal === DICT_CSV_HEADER[1] && enVal === DICT_CSV_HEADER[2]) ||
+                    (!/[\u4e00-\u9fff]/.test(rawVal) && /[a-zA-Z]/.test(enVal)))) continue;
+    const entry = normalizeDictEntry({ raw: rawVal, zh: zhVal, en: enVal });
+    if (entry) entries.push(entry);
   }
   return entries;
 }
@@ -6432,7 +6540,8 @@ document.getElementById('dictImportFile').addEventListener('change', async (e) =
     if (name.endsWith('.json')) {
       const parsed = JSON.parse(text);
       if (!Array.isArray(parsed)) throw new Error('JSON 格式錯誤：需為陣列');
-      entries = parsed.filter(x => x.raw && x.zh && x.en);
+      entries = parsed.map(normalizeDictEntry).filter(Boolean);
+      if (entries.length < parsed.length) log(`⚠ 略過 ${parsed.length - entries.length} 條不合格條目（三欄皆須為非空字串，原始字至少一個別稱）`, 'warn');
     } else if (name.endsWith('.tsv') || name.endsWith('.txt')) {
       entries = importDelimited(text.replace(/^\uFEFF/, ''), '\t');
     } else {
@@ -6461,10 +6570,7 @@ bindEditorEvents();
   const btn = document.getElementById('themeToggleBtn');
   if (!btn) return;
 
-  const STYLES = {
-    dark:  '--bg:#0a0a0a;--panel:#111113;--panel2:#18181c;--border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.13);--text:#e8e4df;--muted:#6b6760;--accent:#00e5a0;--accent2:#00b87a;--warn:#f5c542;--err:#ff5a5a;--noise-opacity:0.5;background:#0a0a0a;color:#e8e4df',
-    light: '--bg:#f4f4f0;--panel:#ffffff;--panel2:#eeeeea;--border:rgba(0,0,0,0.08);--border2:rgba(0,0,0,0.14);--text:#1a1a18;--muted:#888880;--accent:#008f62;--accent2:#006f4c;--warn:#b58800;--err:#cc2222;--noise-opacity:0.12;background:#f4f4f0;color:#1a1a18',
-  };
+  const STYLES = window._themeStyles;   // 由檔頭的阻塞式主題 script 提供（唯一來源）
 
   function applyTheme(theme) {
     // setAttribute 寫入整個 style string — inline style 永遠優先於任何 stylesheet

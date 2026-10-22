@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-22.4-brightgreen)
+![Version](https://img.shields.io/badge/version-v24-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-Browser-orange)
 ![Offline](https://img.shields.io/badge/offline-100%25-success)
@@ -14,7 +14,7 @@
 
 [快速開始](#-快速開始) · [功能特色](#-功能特色) · [常見問題](#-常見問題)
 
-最後更新：2026-09-27
+最後更新：2026-10-22
 
 </div>
 
@@ -22,12 +22,14 @@
 
 ## 📖 簡介
 
-所有音訊處理皆在本機瀏覽器內完成，不呼叫任何外部 API，適合處理含隱私或機密內容的音訊。安裝為 PWA 後，介面本身可離線開啟（辨識新音訊仍需先下載一次模型）。
+在瀏覽器中使用 Whisper AI 模型進行離線語音辨識與字幕產生，**音訊與影片檔案完全不會上傳至任何伺服器**——所有運算（模型下載後）都在使用者本機瀏覽器內完成。可安裝為 PWA，安裝後支援離線使用。
 
 ```
 音訊檔案 → 瀏覽器（Whisper ONNX） → 字幕檔
               ↑ 完全本機，零資料外傳
 ```
+
+唯一的網路存取是首次下載所選 Whisper 模型（來自 Hugging Face / jsDelivr / unpkg CDN），下載後由瀏覽器快取，離線可重複使用。
 
 ---
 
@@ -45,13 +47,13 @@
 
 ### 核心功能
 
+- **批次處理**：一次拖入多個音訊／視訊檔案，逐一排隊處理，支援中途取消與斷點續傳
+- **⚡ 斷點續傳**：頁面意外關閉後，重開可從中斷段落繼續
+- **指定輸出資料夾**：批次完成後自動寫檔，免手動下載
 - **WebGPU 加速**：自動偵測並啟用，不支援時降級至 WASM
 - **自動量化**：依可用記憶體自動選 fp32 / q8 / q4，壓縮至 400–800 MB
 - **動態記憶體調適**：記憶體監控貫穿整個批次處理過程，非僅第一個檔案
 - **雙層模型快取**：File System Access API 資料夾 + IndexedDB 備援
-- **批次辨識**：多檔拖放依序處理，支援中途取消
-- **⚡ 斷點續傳**：頁面意外關閉後，重開可從中斷段落繼續
-- **指定輸出資料夾**：批次完成後自動寫檔，免手動下載
 - **🔒 Wake Lock 防休眠**：辨識進行中自動鎖定螢幕常亮；不支援的瀏覽器會顯示提示但不影響辨識
 - **👁 字幕即時預覽**：完成項目可展開預覽面板，於影片／音訊上即時檢視字幕疊圖，調整字級與垂直位置
 
@@ -61,17 +63,17 @@
 |------|------|
 | Silero VAD v5 | 跳過靜音，消除幻覺字幕，節省 20–40% 推論時間 |
 | 音訊正規化 | Peak Normalization -1 dBTP，降低漏字率 |
-| 人聲分離（UVR）| MDX-Net Kim_Vocal_2，去除背景音樂後再辨識（首次需下載 ~63MB 模型） |
+| 人聲分離（UVR，選用、預設關）| MDX-Net Kim_Vocal_2，去除背景音樂後再辨識（首次需下載 ~64MB 模型；**很慢**，耗時為音訊長度的數倍；低記憶體裝置不提供）。單檔模式可另外下載人聲 WAV |
 
-### ✦ 智慧後處理（11 項可選）
+### ✦ 智慧後處理
 
 **排版**：合併短行 / 分割長行  
 **時間軸**：修正重疊（預設啟用）/ 修正過短顯示時間  
 **文字**：自動補全句號 / 修正英文大小寫  
 **簡繁**：簡體轉台灣正體（opencc-js，預設啟用，於醫學詞典比對前執行）  
 **術語**：醫學專有名詞標注 + 自訂詞典（JSON / CSV / TSV 匯入匯出）  
-**精準度**：注音聲學模糊匹配 v2（預設啟用）/ 幻覺偵測  
-**進階**：說話者標籤 Diarization `實驗性`（~18 MB 模型）
+**精準度**：注音聲學模糊匹配 v2（預設啟用，相似度門檻預設 0.75，可於「後處理」面板調整）/ 幻覺偵測  
+**進階**：說話者標籤 Diarization `實驗性`（~18 MB 模型）/ 逐字時間戳
 
 ### 語言與格式
 
@@ -86,17 +88,25 @@
 > ⚠️ **必須透過 HTTP/HTTPS 開啟**，直接雙擊 `file://` 會導致模型與 Service Worker 無法運作。
 
 ```bash
-# 方法一：Python
-python -m http.server 8080
-# → http://localhost:8080/
-
-# 方法二：Node.js
+# 任一種本機伺服器皆可，例如：
 npx serve .
-
-# 方法三：VS Code → 右鍵 → Open with Live Server
+# 或
+python -m http.server 8080
 ```
 
-GitHub Pages：將 `index.html`、`sw.js`、`manifest.json`、`icons/` 推送至 repo 根目錄 → Settings → Pages 啟用後，直接使用 HTTPS 網址（本專案設計為根目錄部署）。
+以瀏覽器開啟後即可使用（此為原始碼直接執行，**不含** CSP；CSP 只在建置產物 `dist/` 內注入）。**不建議以 `file://` 直接開啟**——Service Worker／PWA 安裝在 `file://` 協定下無法正常運作，請務必透過 HTTP(S) 伺服器存取。
+
+---
+
+## 🌐 部署到 GitHub Pages
+
+本專案透過 GitHub Actions 自動建置並部署（設定檔：`.github/workflows/deploy.yml`）。日常只需 `git push` 到 `main`，不需手動處理任何檔案：
+
+1. 一次性設定：repo Settings → Pages → Build and deployment → Source 選擇 **GitHub Actions**
+2. 之後每次 push 到 `main`，Actions 依序執行：圖示一致性檢查（`scripts/check-consistency.mjs`）→ 建置（`scripts/build.mjs`）→ 部署 `dist/`
+3. 建置時自動完成兩件事：(a) 為 `index.html` 注入 Content-Security-Policy（含 3 段內嵌 `<script>` 的 SHA-256 hash）；(b) 產生 `sw.js` 的 `CACHE_VERSION`（UTC，格式 `YYYYMMDD-HHmm`），**不需手動遞增**
+
+`dist/` 不進版控（已列入 `.gitignore`），只存在於 CI 執行期間。
 
 ---
 
@@ -118,6 +128,7 @@ GitHub Pages：將 `index.html`、`sw.js`、`manifest.json`、`icons/` 推送至
 
 - **瀏覽器**：Chrome / Edge（建議最新版；需支援 WebAssembly、Web Worker、IndexedDB）
 - Firefox 不支援 File System Access API，模型快取資料夾與輸出資料夾功能不可用，辨識功能仍正常。
+- **首次使用需連線下載所選模型**（模型下載後由瀏覽器快取，離線可重複使用同一模型）
 - **記憶體**：本工具具備「動態記憶體調適」，會依可用記憶體自動調整模型量化精度：
   - `large-v3-turbo` 系列（含 WebGPU 相容版）：建議系統記憶體 ≥ 8GB，執行時需 3–4GB 可用 RAM，不足時自動壓縮模型至約 400–800MB
   - `base` / `small` / `medium`：需求遠低於 large-v3-turbo 系列，一般現代裝置可正常執行
@@ -159,7 +170,20 @@ GitHub Pages：將 `index.html`、`sw.js`、`manifest.json`、`icons/` 推送至
 - 桌機 Chrome / Edge：網址列出現安裝圖示，或選單「安裝應用程式」
 - Android Chrome：選單「加入主畫面」
 - 安裝後介面本身可離線開啟；**辨識新音訊仍需網路連線下載一次所選模型**，下載後由瀏覽器快取供離線重複使用
-- 每次更新部署內容後，請同步遞增 `sw.js` 內的 `CACHE_VERSION`，否則使用者瀏覽器可能因快取看不到更新
+
+---
+
+## 🛠 開發與測試
+
+指令以 Windows PowerShell（Windows 11）為準。
+
+```powershell
+npm install                      # 安裝 @playwright/test、serve 等 devDependencies
+npx playwright install chromium
+npm run check                    # 一致性檢查（圖示三處一致、預設值單一來源等）
+npm run build                    # 產生 dist/（注入 CSP、寫入 CACHE_VERSION）
+npm run test:functional           # 離線功能測試（需先 npm run build）
+```
 
 ---
 
@@ -183,6 +207,7 @@ GitHub Pages：將 `index.html`、`sw.js`、`manifest.json`、`icons/` 推送至
 
 | 版本 | 主要更新 |
 |------|---------|
+| **v24** | GitHub Actions 自動建置部署；dist 版 Content-Security-Policy 強化（含 Hugging Face 轉址主機白名單）；記憶體分級與錯誤驅動降級（依裝置分級決定模型 dtype，失敗依錯誤類型重試）；UVR 人聲分離（MDX-Net）；注音聲學模糊匹配 v2＋醫學術語自訂詞典；逐字時間戳；測試覆蓋 round9～round14（含真實 ORT 人聲分離測試） |
 | v22 系列（v22 → v22.4）| 簡繁正規化（opencc-js）、WebGPU 相容測試模型、字幕即時預覽面板、PWA 根目錄部署修正、多輪穩定性與發布就緒度稽核。逐輪詳細紀錄見 [`CHANGELOG_v22.md`](./CHANGELOG_v22.md) |
 | v16 | Wake Lock 防休眠（行動裝置辨識保障）、Worker 全域錯誤攔截、UVR importScripts 容錯處理 |
 | v15 | Transformers.js 3.5.2、動態記憶體調適、斷點續傳 |
@@ -193,12 +218,16 @@ GitHub Pages：將 `index.html`、`sw.js`、`manifest.json`、`icons/` 推送至
 
 ```
 .
-├── index.html         # 主程式（單一自包含檔案：UI + 3 個 Worker 樣板字串）
-├── sw.js               # Service Worker（離線快取策略）
-├── manifest.json       # PWA manifest
-├── icons/              # PWA / Apple touch 圖示
-├── tests/               # Playwright 測試腳本與測試素材
-└── CHANGELOG_v22.md    # v22 系列逐輪稽核紀錄
+├── index.html          # 主程式（單一自包含檔案：UI + 3 個 Worker 樣板字串）
+├── sw.js                # Service Worker（離線快取策略）
+├── manifest.json         # PWA manifest
+├── icons/                # PWA / Apple touch 圖示
+├── scripts/              # check-consistency.mjs（一致性檢查）、build.mjs（CSP＋CACHE_VERSION＋產出 dist/）
+├── tests/                # Playwright 測試（functional／perf／network 三個 project）
+├── .github/workflows/    # deploy.yml：push main → 檢查 → 建置 → 部署 GitHub Pages
+├── package.json
+├── LICENSE               # MIT
+└── CHANGELOG_v22.md      # v22 系列逐輪稽核紀錄
 ```
 
 ---

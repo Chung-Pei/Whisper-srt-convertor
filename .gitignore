@@ -16,3 +16,6 @@ Thumbs.db
 # 本機環境變數（若未來新增）
 .env
 .env.local
+
+# 建置產物（CI 產生，不進版控）
+dist/

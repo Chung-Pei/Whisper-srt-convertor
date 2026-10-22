@@ -1,7 +1,9 @@
 // sw.js — Whisper 離線字幕產生器 Service Worker
-// CACHE_VERSION：每次更新 index.html 靜態資源後遞增（格式：YYYYMMDD-N）
-const CACHE_VERSION = '20260928-1';
-const CACHE_NAME    = `whisper-subtitler-${CACHE_VERSION}`;
+// CACHE_VERSION：由 scripts/build.mjs 於建置時自動產生（UTC，格式 YYYYMMDD-HHmm），不需手動遞增。
+// 此處的值僅為最後一次本機測試的殘留；實際上線版本以 dist/sw.js 為準。
+const CACHE_VERSION = '20261021-2323';
+const CACHE_PREFIX  = 'whisper-subtitler-';
+const CACHE_NAME    = `${CACHE_PREFIX}${CACHE_VERSION}`;
 
 // App Shell：只快取 UI 骨架
 // BASE 由 sw.js 自身網址推得：根目錄部署 → ''；子路徑部署（username.github.io/repo/）→ '/repo'
@@ -36,14 +38,16 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// ── 啟動：清除舊版快取 ───────────────────────────────────────────────────────
+// ── 啟動：清除本程式的舊版快取 ─────────────────────────────────────────────────
+// Cache Storage 以「網域」為單位：同一個 github.io 網域下的其他 PWA 共用同一份。
+// 只能刪自己前綴的舊版，不可刪「所有不等於 CACHE_NAME 的快取」，否則會清掉同網域其他應用的快取。
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
       .then((keys) =>
         Promise.all(
           keys
-            .filter((key) => key !== CACHE_NAME)
+            .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME)
             .map((key) => caches.delete(key))
         )
       )

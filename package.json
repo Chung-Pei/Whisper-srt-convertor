@@ -1,0 +1,17 @@
+{
+  "name": "whisper-srt",
+  "private": true,
+  "scripts": {
+    "check": "node scripts/check-consistency.mjs",
+    "build": "node scripts/build.mjs",
+    "test": "playwright test --project=functional",
+    "test:functional": "playwright test --project=functional",
+    "test:perf": "playwright test --project=perf",
+    "test:network": "playwright test --project=network"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "onnxruntime-web": "1.30.0",
+    "serve": "^14.2.6"
+  }
+}
