@@ -2147,7 +2147,11 @@ self.addEventListener('message', async (e) => {
         // 不在同一個 Worker 內改用 WASM 重試：失敗前可能已建好部分 session（GPU buffer、已複製進 WASM heap 的權重），
         // 而 WASM 記憶體只增不減；只有 terminate() 能真正釋放。改為回報特定錯誤，由主執行緒建新 Worker 以 WASM 重載。
         if (device !== 'webgpu') throw gpuErr;
-        throw new Error('GPU_LOAD_FAILED: ' + String(gpuErr && gpuErr.message || gpuErr));
+        // 覆核 r1：下載／讀檔類錯誤（斷網、離線未快取、資料夾缺檔、空間不足、取消）與 GPU 無關，
+        // 不可當成 GPU 失敗——否則本次工作階段永遠改走 CPU，且 WASM 需要另一組權重，離線時反而更糟。原錯誤直接拋出。
+        const gm = String(gpuErr && gpuErr.message || gpuErr);
+        if (/fetch|network|offline|abort|quota|storage|404|not found|could not locate|unauthorized|ENOENT|load failed/i.test(gm)) throw gpuErr;
+        throw new Error('GPU_LOAD_FAILED: ' + gm);
       }
       self.postMessage({ type: 'MODEL_READY', payload: { device } });
     } catch (err) {
@@ -2510,8 +2514,8 @@ async function reloadWorkerForRetry(kind, modelId) {
   if (kind === 'oom' || kind === 'crash') {
     if (_lastBackend === 'webgpu') {
       preferGpu = false;
-      _gpuFailedModels.add(modelId);                 // 之後重建 Worker（例如下一個檔案）也不再先試 WebGPU
-      log('⚠ GPU 推論失敗，改用 CPU（WASM）重載模型...', 'warn');
+      markGpuFailed(modelId, `段落推論失敗（${kind}）`); // 之後重建 Worker（例如下一個檔案）也不再先試 WebGPU
+      log('重新載入模型（一般模式）...', 'info');
     } else {
       dtype = lighterDtype(dtype);
       _dtypeCache.set(modelId, dtype);
@@ -2673,7 +2677,8 @@ const _gpuFailedModels = new Set();
 function markGpuFailed(modelId, why) {
   if (!modelId || _gpuFailedModels.has(modelId)) return;
   _gpuFailedModels.add(modelId);
-  log(`⚠ ${modelId} 在 WebGPU 上失敗（${why}），本次工作階段改用 CPU（WASM）`, 'warn');
+  log(`⚠ 顯示卡加速無法使用，已改用一般模式（速度較慢，但字幕結果相同）。模型：${modelId}`, 'warn');
+  if (why) log(`（技術細節，供回報問題用：${why}）`, 'info');
 }
 
 /** 預設是否先試 WebGPU。v24 r8：低記憶體等級（iOS、deviceMemory ≤ 4）載入 medium／large 時不用 WebGPU——
@@ -4706,6 +4711,22 @@ function showVocalDownload(blob, baseName) {
   a.style.display = 'flex';
 }
 
+/** 覆核 r1：離線時粗略確認 Whisper 模型檔已在本機（Cache Storage 或模型資料夾）。
+ *  連線中、或瀏覽器不支援 Cache Storage 時一律回 true（不阻擋，交給正常載入流程處理）。 */
+async function whisperModelAvailableOffline(modelId) {
+  if (navigator.onLine !== false) return true;
+  try { if (await checkModelExistsInFolder(`${modelId}/config.json`)) return true; } catch (_) {}
+  if (typeof caches === 'undefined') return true;
+  try {
+    for (const name of await caches.keys()) {
+      const c = await caches.open(name);
+      const keys = await c.keys();
+      if (keys.some(r => r.url.includes(`/${modelId}/`) && /config\.json/.test(r.url))) return true;
+    }
+  } catch (_) { return true; }
+  return false;
+}
+
 async function runInference(file, resumeFromChunk = 0, resumeChunks = [], opts = {}) {
   outputContent = '';
   setProgress(0, '準備中...', true);
@@ -4729,7 +4750,13 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = [], opts =
     // 先做人聲分離（其 Worker 結束即釋放），再載入 Whisper，首個檔案的峰值只剩兩者中較大的一個。
     // 批次的第 2 個檔案起 Whisper 已在記憶體中，順序不影響。
     let vocal = null;
-    if (document.getElementById('tog_uvr')?.checked) vocal = await runVocalSeparation(file, { wantWav: opts.wantVocalWav !== false });
+    if (document.getElementById('tog_uvr')?.checked) {
+      // 覆核 r1：人聲分離可能要數十分鐘；離線且 Whisper 模型尚未載入時，先確認模型檔在本機（快取或模型資料夾），
+      // 避免做完人聲分離才發現模型無法載入、白等一場。
+      if ((!workerReady || loadedModel !== selectedModel) && !(await whisperModelAvailableOffline(selectedModel)))
+        throw new Error(`目前離線，且找不到「${selectedModel}」的本機模型檔。請連上網路下載一次模型，或在設定中選擇存放模型的資料夾後再試。`);
+      vocal = await runVocalSeparation(file, { wantWav: opts.wantVocalWav !== false });
+    }
     if (isCancelled) throw new Error('CANCELLED');
 
     let worker = inferenceWorker ?? createWorker();

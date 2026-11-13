@@ -4,6 +4,8 @@
 //   R8-03  預設是否試 WebGPU：低記憶體等級＋medium／large 不試；某模型 GPU 失敗後本次工作階段不再試（以模型區分）
 //   R8-04  Whisper：WebGPU 建 session 失敗 → 終止 Worker、建新 Worker 以 WASM 重載，辨識照常完成
 //   R8-05  人聲分離在載入 Whisper 模型之前執行（首個檔案的記憶體峰值不疊加）
+//   R8-08  WebGPU 路徑的下載錯誤不當成 GPU 失敗（覆核 r1）
+//   R8-09  離線且本機無 Whisper 模型 → 人聲分離前即停止（覆核 r1）
 //   R8-06  UVR WebGPU：建 session 失敗／推論失敗／與 WASM 結果不一致 → 改回 WASM，結果與純 WASM 相同；一致時沿用 GPU
 //   R8-07  UVR：讀不出長度且檔案大於「長度上限 × 128 kbps」→ 略過，不解碼、不建 Worker
 // 全部離線：函式庫、ORT、模型皆為替身（page.route）。真實瀏覽器 WebGPU 硬體未在此驗證。
@@ -92,7 +94,7 @@ test('R8-03 預設是否試 WebGPU：低記憶體＋medium／large 不試；GPU 
       T.markGpuFailed('Xenova/whisper-base', 'test');
       T.markGpuFailed('Xenova/whisper-base', 'test');        // 第二次不重複記錄
       const after = { base: p('Xenova/whisper-base'), small: p('Xenova/whisper-small'), explicit: T.buildLoadModelPayload('Xenova/whisper-base', 'q8', { preferGpu: true }).preferGpu };
-      const logs = (document.getElementById('logBox')!.textContent || '').split('在 WebGPU 上失敗').length - 1;
+      const logs = (document.getElementById('logBox')!.textContent || '').split('顯示卡加速無法使用').length - 1;
       return { before, after, logs };
     });
     await ctx.close();
@@ -142,9 +144,48 @@ test('R8-04 Whisper：WebGPU 建 session 失敗 → 終止該 Worker、建新 Wo
   expect(r.workers[0].terminated).toBe(true);                 // 失敗的 Worker 被終止（唯一能釋放其記憶體的方法）
   expect(r.workers.length).toBe(2);
   expect(r.backend).toEqual(['webgpu', 'wasm']);
-  expect(r.log).toContain('fake webgpu session failed');
-  expect(r.log).toContain('在 WebGPU 上失敗');
+  expect(r.log).toContain('顯示卡加速無法使用');
   expect(await page.locator('#statModel').textContent()).toBe('CPU');
+});
+
+test('R8-08 Whisper：WebGPU 路徑遇到下載錯誤（Failed to fetch）→ 不視為 GPU 失敗、不標記、不改 WASM 重載；顯示原錯誤', async ({ page }) => {
+  test.setTimeout(120_000);
+  const stubLib = `
+    try { Object.defineProperty(WorkerNavigator.prototype, 'gpu', { get: () => ({ requestAdapter: async () => ({}) }), configurable: true }); } catch (_) {}
+    export const env = {};
+    export const ModelRegistry = { get_available_dtypes: async () => ['fp32', 'q8', 'q4'] };
+    export async function pipeline(task, id, opts) {
+      if (opts.device === 'webgpu') throw new TypeError('Failed to fetch');
+      const fn = async () => ({ chunks: [{ text: '測試', timestamp: [0, 1] }] });
+      fn.dispose = async () => {};
+      return fn;
+    }`;
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'gpu', { get: () => ({ requestAdapter: async () => ({}) }), configurable: true });
+    const w = window as any; w.__loads = []; w.__workers = []; w.__backend = [];
+    const RealWorker = window.Worker;
+    w.Worker = class extends RealWorker {
+      constructor(u: any, o: any) {
+        super(u, o); const rec = { terminated: false }; w.__workers.push(rec);
+        const t = this.terminate.bind(this); this.terminate = () => { rec.terminated = true; t(); };
+        this.addEventListener('message', (e: any) => { if (e.data?.type === 'BACKEND') w.__backend.push(e.data.payload.backend); });
+      }
+      postMessage(m: any, tr?: any) { if (m?.type === 'LOAD_MODEL') w.__loads.push({ worker: w.__workers.length, preferGpu: m.payload.preferGpu }); return tr ? super.postMessage(m, tr) : super.postMessage(m); }
+    };
+  });
+  for (const re of [/cdn\.jsdelivr\.net\/npm\/@huggingface\/transformers@[^/]+\/dist\/transformers\.min\.js/, /unpkg\.com\/@huggingface\/transformers@[^/]+\/dist\/transformers\.min\.js/]) {
+    await page.route(re, (r) => r.fulfill({ contentType: 'application/javascript', body: stubLib }));
+  }
+  await page.route('**/opencc-js@*/dist/umd/cn2t.js', (r) => r.fulfill({ contentType: 'application/javascript', body: 'window.OpenCC = { Converter: () => (t) => t };' }));
+  await recognize(page);
+  await setToggles(page, [], ['tog_vad', 'tog_uvr', 'tog_diarization']);
+  await page.locator('#fileInput').setInputFiles(SAMPLE_AUDIO);
+  await page.locator('#startBtn').click();
+  await expect(page.locator('.batch-item.error')).toHaveCount(1, { timeout: 90_000 });
+  const r = await page.evaluate(() => ({ loads: (window as any).__loads, log: document.getElementById('logBox')!.textContent }));
+  expect(r.loads).toEqual([{ worker: 1, preferGpu: true }]);   // 沒有改用 WASM 重載
+  expect(r.log).toContain('Failed to fetch');
+  expect(r.log).not.toContain('顯示卡加速無法使用');
 });
 
 // ── 共用：UVR 替身 ORT ───────────────────────────────────────────────
@@ -214,6 +255,32 @@ test('R8-05 開啟人聲分離：UVR Worker 在 Whisper Worker 建立（載入�
   expect(await page.locator('#logBox').textContent()).toContain('人聲分離完成');
 });
 
+test('R8-09 離線＋開啟人聲分離＋本機沒有 Whisper 模型 → 人聲分離前就停止並白話說明；不建 UVR Worker', async ({ browser }) => {
+  test.setTimeout(180_000);
+  const ctx = await newCtx(browser); const page = await ctx.newPage();
+  await page.addInitScript(() => { (window as any).__RealWorker = window.Worker; });
+  const segs = await buildSegments(ctx, { segments: 2, linesPerSegment: 3, charsPerLine: 14, termRate: 0.1, seed: 3 });
+  await installScriptedWorker(page, { segments: segs });
+  await page.addInitScript(() => {
+    const Fake = window.Worker as any, Real = (window as any).__RealWorker, w = window as any; w.__order = [];
+    w.Worker = class { constructor(u: any, o: any) {
+      if (o && o.name === 'uvr') { const r = new Real(u, o); w.__order.push('uvr:new'); const t = r.terminate.bind(r); r.terminate = () => { w.__order.push('uvr:end'); t(); }; return r; }
+      w.__order.push('whisper:new'); return new Fake(u, o);
+    } };
+  });
+  await page.addInitScript(() => Object.defineProperty(navigator, 'onLine', { get: () => false, configurable: true }));
+  await setupUvr(page, 'none');
+  await page.evaluate(() => (window as any).__t.evalIn((window as any).__USE_FAKE));
+  await page.locator('.model-btn[data-model="Xenova/whisper-base"]').click();
+  await setToggles(page, ['tog_uvr'], ['tog_vad']);
+  await page.locator('#fileInput').setInputFiles({ name: 'lecture.wav', mimeType: 'audio/wav', buffer: makeWav(14) });
+  await page.locator('#startBtn').click();
+  await expect(page.locator('.batch-item.error')).toHaveCount(1, { timeout: 60_000 });
+  const order: string[] = await page.evaluate(() => (window as any).__order);
+  expect(order).not.toContain('uvr:new');
+  expect(await page.locator('#logBox').textContent()).toContain('目前離線，且找不到');
+});
+
 // ── R8-06：UVR WebGPU 與 WASM 後備 ──────────────────────────────────────
 test.describe('r8：UVR WebGPU', () => {
   test.setTimeout(180_000);
@@ -244,7 +311,7 @@ test.describe('r8：UVR WebGPU', () => {
       const done = r.uvr.find((x: any) => x.type === 'DONE');
       expect(done.backend).toBe(c.backend);
       expect(r.log).toContain(c.gpu === 'ok' ? '人聲分離後端：⚡ WebGPU' : c.gpu === 'run-fail' || c.gpu === 'mismatch' ? '人聲分離後端：⚡ WebGPU' : '人聲分離後端：CPU（WASM）');
-      expect(r.log.includes('Kim_Vocal_2.onnx 在 WebGPU 上失敗')).toBe(c.failed);
+      expect(r.log.includes('模型：Kim_Vocal_2.onnx')).toBe(c.failed);
       if (c.gpu === 'mismatch') expect(r.log).toContain('SNR');
     });
   }

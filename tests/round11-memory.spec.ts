@@ -355,7 +355,7 @@ test.describe('M3：錯誤驅動降級', () => {
     const r = await runM3(browser, { backend: 'webgpu', gpu: true, rules: [{ segIdx: 1, attempt: 0, reply: { type: 'CHUNK_ERROR', error: 'GPUDevice was lost' } }] });
     expect(r.loads[0].preferGpu).toBe(true);
     expect(r.loads[1].preferGpu).toBe(false);
-    expect(r.log).toContain('改用 CPU（WASM）');
+    expect(r.log).toContain('已改用一般模式');
   });
 
   test('TM-09h 取消：在等待逾時的重試期間按取消 → 立即停止', async ({ browser }) => {
