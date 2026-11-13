@@ -2138,11 +2138,17 @@ self.addEventListener('message', async (e) => {
         self.postMessage({ type: 'BACKEND', payload: { backend: 'wasm', dtype } });
       }
 
-      pipe = await pipelineFn('automatic-speech-recognition', payload.modelId, {
-        dtype,
-        device,
-        progress_callback: (x) => self.postMessage({ type: 'PROGRESS', payload: x }),
-      });
+      const progress_callback = (x) => self.postMessage({ type: 'PROGRESS', payload: x });
+      try {
+        pipe = await pipelineFn('automatic-speech-recognition', payload.modelId, { dtype, device, progress_callback });
+      } catch (gpuErr) {
+        // v24 r8：原本只有 requestAdapter() 失敗才降級；adapter 拿得到、但建立 WebGPU session 失敗
+        // （不支援的運算子、shader 編譯失敗、GPU 記憶體不足、requestDevice 被拒）會讓整個檔案失敗。
+        // 不在同一個 Worker 內改用 WASM 重試：失敗前可能已建好部分 session（GPU buffer、已複製進 WASM heap 的權重），
+        // 而 WASM 記憶體只增不減；只有 terminate() 能真正釋放。改為回報特定錯誤，由主執行緒建新 Worker 以 WASM 重載。
+        if (device !== 'webgpu') throw gpuErr;
+        throw new Error('GPU_LOAD_FAILED: ' + String(gpuErr && gpuErr.message || gpuErr));
+      }
       self.postMessage({ type: 'MODEL_READY', payload: { device } });
     } catch (err) {
       self.postMessage({ type: 'ERROR', payload: err.message });
@@ -2475,6 +2481,26 @@ function runChunkOnWorker(worker, base, audioCopy, timeoutMs = CHUNK_TIMEOUT_MS)
   });
 }
 
+const GPU_LOAD_FAILED = 'GPU_LOAD_FAILED: ';
+/** 送 LOAD_MODEL 並等 MODEL_READY；回傳實際載入模型的 Worker。
+ *  v24 r8：WebGPU 建 session 失敗（Worker 回 GPU_LOAD_FAILED）→ 記下該模型不再用 GPU、終止這個 Worker
+ *  （唯一能真正釋放 WASM heap 與 GPU buffer 的方法）、建新 Worker 以 WASM 重載。onMsg 會跟著搬到新 Worker。 */
+async function loadModelOnWorker(worker, modelId, dtype, opts = {}, onMsg = null) {
+  try {
+    await workerCall(worker, 'LOAD_MODEL', buildLoadModelPayload(modelId, dtype, opts), 'MODEL_READY', 600000);
+    return worker;
+  } catch (err) {
+    const m = String(err?.message ?? err);
+    if (!m.startsWith(GPU_LOAD_FAILED)) throw err;
+    markGpuFailed(modelId, m.slice(GPU_LOAD_FAILED.length));
+    if (onMsg) worker.removeEventListener('message', onMsg);
+    const w = createWorker();                        // 終止舊 Worker 並建立新的（inferenceWorker 隨之更新）
+    if (onMsg) w.addEventListener('message', onMsg);
+    await workerCall(w, 'LOAD_MODEL', buildLoadModelPayload(modelId, dtype, { ...opts, preferGpu: false }), 'MODEL_READY', 600000);
+    return w;
+  }
+}
+
 /** 失敗後重建 Worker 並重載模型。oom／crash：WebGPU 後端 → 改用 WASM（Worker 對 WebGPU 固定用 enc:fp16/dec:q4 或 fp32，忽略 dtype）；
  *  WASM 後端 → 改選更輕的 dtype（寫回 _dtypeCache，本次工作階段延續）。timeout：同設定重建。 */
 async function reloadWorkerForRetry(kind, modelId) {
@@ -2484,6 +2510,7 @@ async function reloadWorkerForRetry(kind, modelId) {
   if (kind === 'oom' || kind === 'crash') {
     if (_lastBackend === 'webgpu') {
       preferGpu = false;
+      _gpuFailedModels.add(modelId);                 // 之後重建 Worker（例如下一個檔案）也不再先試 WebGPU
       log('⚠ GPU 推論失敗，改用 CPU（WASM）重載模型...', 'warn');
     } else {
       dtype = lighterDtype(dtype);
@@ -2495,14 +2522,15 @@ async function reloadWorkerForRetry(kind, modelId) {
   } else {
     log('⚠ 推論逾時，重建 Worker 並重載模型...', 'warn');
   }
-  const worker = createWorker();
+  let worker = createWorker();
   workerReady = false;
   const onBackend = (e) => { if (e.data?.type === 'BACKEND') applyBackendInfo(e.data.payload ?? {}); };
   worker.addEventListener('message', onBackend);
   try {
-    await workerCall(worker, 'LOAD_MODEL', buildLoadModelPayload(modelId, dtype, { preferGpu }), 'MODEL_READY', 600000);
+    worker = await loadModelOnWorker(worker, modelId, dtype, { preferGpu }, onBackend);
   } finally {
     worker.removeEventListener('message', onBackend);
+    inferenceWorker?.removeEventListener('message', onBackend);
   }
   workerReady = true;
   loadedModel = modelId;
@@ -2638,11 +2666,30 @@ async function chooseDtype(modelId) {
 
 // LOAD_MODEL 訊息內容的唯一組裝處。原本「首次載入」與「重試重載」兩處各自手寫一份物件字面值，
 // 欄位一旦增減就會漏改其中一處。
+// v24 r8：WebGPU 對某個模型失敗過（建 session 失敗而降級，或推論中 OOM／device lost）後，本次工作階段內該模型不再嘗試 WebGPU。
+// 原本 Worker 一旦因錯誤被重建（例如某個檔案失敗），下一個檔案又會先試 WebGPU、再失敗一次，批次中反覆浪費時間與記憶體。
+// 以模型區分：large 在 GPU 記憶體不足，不代表 base 也不行。
+const _gpuFailedModels = new Set();
+function markGpuFailed(modelId, why) {
+  if (!modelId || _gpuFailedModels.has(modelId)) return;
+  _gpuFailedModels.add(modelId);
+  log(`⚠ ${modelId} 在 WebGPU 上失敗（${why}），本次工作階段改用 CPU（WASM）`, 'warn');
+}
+
+/** 預設是否先試 WebGPU。v24 r8：低記憶體等級（iOS、deviceMemory ≤ 4）載入 medium／large 時不用 WebGPU——
+ *  Worker 在 GPU 路徑固定用 fp32 或 encoder fp16，不受記憶體分級的 dtype 限制；iOS 超過上限會直接把分頁砍掉，
+ *  不會有任何錯誤可讓重試機制接手。 */
+function defaultPreferGpu(modelId) {
+  if (!isWebGPUSupported() || _gpuFailedModels.has(modelId)) return false;
+  const big = /whisper-(medium|large)/i.test(String(modelId));
+  return !(big && detectMemoryTier().tier === 'low');
+}
+
 function buildLoadModelPayload(modelId, dtype, opts = {}) {
   return {
     modelId,
     dtype,
-    preferGpu: opts.preferGpu ?? isWebGPUSupported(),
+    preferGpu: opts.preferGpu ?? defaultPreferGpu(modelId),
     modelFolderHandle: modelFolderHandle ?? null,
   };
 }
@@ -3756,11 +3803,13 @@ async function decodeFileToBuffer(file, rate) {
 
 /** 多聲道降混成單聲道：依聲道序累加、最後除以聲道數（運算順序與 v23.2 相同）。單聲道直接回傳 AudioBuffer 的聲道資料（不複製）。 */
 function mixToMono(buffer) {
+  // v24 r8：直接累加到第 0 聲道並回傳（呼叫端之後都會丟棄 AudioBuffer），不再另配一條與音訊等長的陣列。
+  // 數值與舊版逐位元相同：舊版從 0 開始累加，0 + ch0 恰為 ch0，之後加法順序與除法皆相同。
   const numCh = buffer.numberOfChannels;
-  if (numCh === 1) return buffer.getChannelData(0);
-  const len  = buffer.getChannelData(0).length;
-  const mono = new Float32Array(len);
-  for (let ch = 0; ch < numCh; ch++) {
+  const mono = buffer.getChannelData(0);
+  if (numCh === 1) return mono;
+  const len = mono.length;
+  for (let ch = 1; ch < numCh; ch++) {
     const chData = buffer.getChannelData(ch);
     for (let s = 0; s < len; s++) mono[s] += chData[s];
   }
@@ -4137,7 +4186,7 @@ const UVR_IDB_KEY    = 'uvr:Kim_Vocal_2';
 const UVR_SR         = 44100;
 const UVR_CFG        = { nFft: 7680, hop: 1024, dimF: 3072, dimT: 256 };
 let   UVR_MAX_SEC    = 1200;                    // 長度上限（秒，20 分鐘）。超過就略過人聲分離，不是失敗。取捨：太低擋掉一般 12～15 分鐘的課程錄音；太高則 44.1 kHz 立體聲解碼＋輸出約 0.85 GB／20 分鐘
-const UVR_MAX_UNKNOWN_BYTES = 150 * 1024 * 1024; // 讀不出長度時，檔案超過此大小就略過（避免解碼成 44.1 kHz 立體聲撐爆記憶體）
+const UVR_MAX_UNKNOWN_BYTES = UVR_MAX_SEC * 16000;  // 讀不出長度時，檔案超過此大小就略過。v24 r8：原為 150 MB——64 kbps 的 150 MB 檔約 5 小時，解碼成 44.1 kHz 立體聲約 6 GB，分頁會在「解碼後的長度檢查」之前就當掉；改為「以 128 kbps 估算不超過長度上限」的大小（約 19 MB）
 const UVR_MIN_VOCAL_RATIO   = 0.01;             // 人聲 RMS 低於輸入 RMS 的 1%（−40 dB）視為模型輸出異常或根本沒有人聲
 
 function uvrCreateDsp(nFft, hop, dimF, dimT) {
@@ -4273,10 +4322,15 @@ function uvrCreateDsp(nFft, hop, dimF, dimT) {
   const count = (n) => Math.max(1, Math.ceil(n / GEN));
 
   /** 分塊分離。runModel(Float32Array[4·dimF·dimT]) → Promise<Float32Array 同尺寸>。
-   *  第 i 塊取原始訊號 [iGEN − TRIM, iGEN − TRIM + CHUNK)（界外補 0），輸出只保留中間 GEN 個樣本 [iGEN, iGEN + GEN)。 */
-  async function separate(left, right, runModel, onProgress) {
+   *  第 i 塊取原始訊號 [iGEN − TRIM, iGEN − TRIM + CHUNK)（界外補 0），輸出只保留中間 GEN 個樣本 [iGEN, iGEN + GEN)。
+   *  opts.inPlace（v24 r8）：輸出直接寫回 left／right，不另配兩條與輸入等長的陣列（20 分鐘 44.1 kHz 立體聲約省 420 MB）。
+   *  第 i 塊寫入 [iGEN, iGEN+GEN) 時，第 i+1 塊開頭還要讀其中最後 TRIM 個「原始」樣本，故寫入前先另存這 TRIM 個樣本。
+   *  數值與非就地版逐位元相同（同一份運算，只有讀取來源不同）。GEN < TRIM 的小設定不支援就地，自動改用一般版。 */
+  async function separate(left, right, runModel, onProgress, opts) {
     const n = left.length, total = count(n);
-    const outL = new Float32Array(n), outR = new Float32Array(n);
+    const inPlace = !!(opts && opts.inPlace) && GEN >= TRIM;
+    const outL = inPlace ? left : new Float32Array(n), outR = inPlace ? right : new Float32Array(n);
+    const hL = inPlace ? new Float32Array(TRIM) : null, hR = inPlace ? new Float32Array(TRIM) : null;
     const cl = new Float32Array(CHUNK), cr = new Float32Array(CHUNK), wl = new Float32Array(CHUNK), wr = new Float32Array(CHUNK);
     const spec = new Float32Array(4 * dimF * dimT);
     let sumIn = 0, sumOut = 0;
@@ -4284,7 +4338,10 @@ function uvrCreateDsp(nFft, hop, dimF, dimT) {
       const base = i * GEN - TRIM;
       for (let j = 0; j < CHUNK; j++) {
         const x = base + j;
-        if (x >= 0 && x < n) { cl[j] = left[x]; cr[j] = right[x]; } else { cl[j] = 0; cr[j] = 0; }
+        if (x >= 0 && x < n) {
+          if (inPlace && i > 0 && j < TRIM) { cl[j] = hL[j]; cr[j] = hR[j]; }   // 已被上一塊覆寫的區段：用另存的原始值
+          else { cl[j] = left[x]; cr[j] = right[x]; }
+        } else { cl[j] = 0; cr[j] = 0; }
       }
       stft(cl, cr, spec);
       const pred = await runModel(spec);
@@ -4293,10 +4350,15 @@ function uvrCreateDsp(nFft, hop, dimF, dimT) {
       if (!Number.isFinite(chk)) throw new Error('模型輸出含非有限值（NaN／Infinity）');
       istft(pred, wl, wr);
       const o = i * GEN, m = Math.min(GEN, n - o);
+      if (inPlace) {                                    // 覆寫前另存下一塊開頭需要的原始樣本
+        const nb = o + GEN - TRIM;
+        for (let j = 0; j < TRIM; j++) { const x = nb + j; if (x >= 0 && x < n) { hL[j] = left[x]; hR[j] = right[x]; } else { hL[j] = 0; hR[j] = 0; } }
+      }
       for (let j = 0; j < m; j++) {
+        const l0 = left[o + j], r0 = right[o + j];      // 先讀原始值（就地模式下下一行會覆寫）
         const a = wl[TRIM + j], b = wr[TRIM + j];
         outL[o + j] = a; outR[o + j] = b;
-        sumOut += a * a + b * b; sumIn += left[o + j] * left[o + j] + right[o + j] * right[o + j];
+        sumOut += a * a + b * b; sumIn += l0 * l0 + r0 * r0;
       }
       if (!Number.isFinite(sumOut)) throw new Error('模型輸出含非有限值（NaN／Infinity）');
       if (onProgress) onProgress(i + 1, total);
@@ -4317,19 +4379,79 @@ const dsp = (${uvrCreateDsp.toString()})(CFG.nFft, CFG.hop, CFG.dimF, CFG.dimT);
 // 全域名稱不可叫 ort：ORT-web 的 UMD 檔（ort.all.min.js／ort.min.js）以 var ort= 在全域宣告 ort，
 // 與這裡的 let／const 同名會讓 importScripts 以 NetworkError 失敗（1.30.0 實測；假 ORT 只指派 self.ort 屬性，測不出來）。
 let ortApi = null, session = null;
+// v24 r8：可選 WebGPU。人聲分離在 WASM 單執行緒約為音訊長度的 2～4 倍時間，是整個流程最慢的一段；
+// 有 WebGPU 時先試 GPU，建立 session 失敗、推論丟例外、或輸出含非有限值時，當場改回 WASM 並重做該段（結果與純 WASM 相同的流程）。
+// modelBytes 只在 GPU 模式保留（改回 WASM 時要重建 session），改回 WASM 後立即釋放。
+let modelBytes = null, onGpu = false, gpuFallbackReason = null;
+
+function createSession(eps) {
+  return ortApi.InferenceSession.create(new Uint8Array(modelBytes), { executionProviders: eps, graphOptimizationLevel: 'all' });
+}
+
+let parityChecked = false;
+const UVR_GPU_PARITY_DB = 40;   // 第一段 WebGPU 與 WASM 結果的訊雜比下限（dB）；低於此值視為 GPU 核心算錯
+
+// session.release() 在 GPU device 已遺失時可能永遠不回來：最多等 2 秒
+function releaseQuietly(s) {
+  if (!s || !s.release) return Promise.resolve();
+  return Promise.race([Promise.resolve().then(() => s.release()).catch(() => {}), new Promise((r) => setTimeout(r, 2000))]);
+}
+
+async function fallbackToWasm(why) {
+  gpuFallbackReason = String(why && why.message ? why.message : why);
+  const old = session; session = null; onGpu = false;
+  await releaseQuietly(old);
+  session = await createSession(['wasm']);
+  modelBytes = null;
+}
+
+async function runOnce(data, sess) {
+  sess = sess || session;
+  const input = new ortApi.Tensor('float32', data, [1, 4, CFG.dimF, CFG.dimT]);
+  let out = null;
+  try {
+    const res = await sess.run({ [sess.inputNames[0]]: input });
+    out = res[sess.outputNames[0]];
+    const d = out && out.dims;
+    if (!d || d.length !== 4 || d[0] !== 1 || d[1] !== 4 || d[2] !== CFG.dimF || d[3] !== CFG.dimT) {
+      throw new Error('模型輸出形狀不符：[' + (d ? Array.prototype.join.call(d, ',') : '無') + ']，預期 [1,4,' + CFG.dimF + ',' + CFG.dimT + ']');
+    }
+    return new Float32Array(out.data);   // 複製：ORT 可能重用輸出緩衝
+  } finally {                            // 例外路徑也要釋放（WebGPU 上是 GPU 記憶體）
+    if (out && out.dispose) out.dispose();
+    if (input.dispose) input.dispose();
+  }
+}
+
+// 第一段：另建 WASM session 算同一段，比對訊雜比。WebGPU 核心算錯但輸出仍是有限值時，前面的 NaN 檢查抓不到，
+// Whisper 會拿到看似正常的錯誤音訊。只做一次（約多一段 WASM 推論的時間），比完立即釋放 WASM session。
+async function gpuParity(gpuOut, data) {
+  const ref = await createSession(['wasm']);
+  try {
+    const w = await runOnce(data, ref);
+    let sig = 0, err = 0;
+    for (let k = 0; k < w.length; k++) { const e = gpuOut[k] - w[k]; sig += w[k] * w[k]; err += e * e; }
+    const snr = err === 0 ? Infinity : 10 * Math.log10(sig / err);
+    return { ok: snr >= UVR_GPU_PARITY_DB, snr, wasmOut: w };
+  } finally { await releaseQuietly(ref); }
+}
 
 async function runModel(data) {
-  const input = new ortApi.Tensor('float32', data, [1, 4, CFG.dimF, CFG.dimT]);
-  const res = await session.run({ [session.inputNames[0]]: input });
-  const out = res[session.outputNames[0]];
-  const d = out && out.dims;
-  if (!d || d.length !== 4 || d[0] !== 1 || d[1] !== 4 || d[2] !== CFG.dimF || d[3] !== CFG.dimT) {
-    throw new Error('模型輸出形狀不符：[' + (d ? Array.prototype.join.call(d, ',') : '無') + ']，預期 [1,4,' + CFG.dimF + ',' + CFG.dimT + ']');
+  if (!onGpu) return runOnce(data);
+  try {
+    const out = await runOnce(data);
+    for (let k = 0; k < out.length; k++) if (!Number.isFinite(out[k])) throw new Error('WebGPU 輸出含非有限值');
+    if (!parityChecked) {
+      parityChecked = true;
+      const p = await gpuParity(out, data);
+      if (!p.ok) { await fallbackToWasm('WebGPU 與 WASM 結果不一致（SNR ' + p.snr.toFixed(1) + ' dB）'); return p.wasmOut; }
+    }
+    return out;
+  } catch (err) {
+    if (!onGpu) throw err;               // 已在 WASM（例如比對用的 WASM session 失敗）：照一般錯誤處理
+    await fallbackToWasm(err);
+    return runOnce(data);
   }
-  const copy = new Float32Array(out.data);   // 複製：ORT 可能重用輸出緩衝
-  if (out.dispose) out.dispose();
-  if (input.dispose) input.dispose();
-  return copy;
 }
 
 self.onmessage = async (e) => {
@@ -4344,12 +4466,18 @@ self.onmessage = async (e) => {
       ortApi = self.ort;
       ortApi.env.wasm.wasmPaths = ORT_BASE;
       ortApi.env.wasm.numThreads = payload.threads || 1;
-      session = await ortApi.InferenceSession.create(new Uint8Array(payload.model), { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
-      self.postMessage({ type: 'READY' });
+      modelBytes = payload.model; onGpu = false; gpuFallbackReason = null; parityChecked = false;
+      if (payload.gpu && self.navigator && self.navigator.gpu) {
+        try { session = await createSession(['webgpu']); onGpu = true; }
+        catch (err) { session = null; gpuFallbackReason = String(err && err.message ? err.message : err); }
+      }
+      if (!session) session = await createSession(['wasm']);
+      if (!onGpu) modelBytes = null;
+      self.postMessage({ type: 'READY', payload: { backend: onGpu ? 'webgpu' : 'wasm', gpuFallbackReason } });
     } else if (type === 'SEPARATE') {
       if (!session) throw new Error('模型尚未載入');
-      const r = await dsp.separate(payload.left, payload.right, runModel, (done, total) => self.postMessage({ type: 'PROGRESS', payload: { done, total } }));
-      self.postMessage({ type: 'DONE', payload: { left: r.left, right: r.right, rmsIn: r.rmsIn, rmsOut: r.rmsOut } }, [r.left.buffer, r.right.buffer]);
+      const r = await dsp.separate(payload.left, payload.right, runModel, (done, total) => self.postMessage({ type: 'PROGRESS', payload: { done, total } }), { inPlace: true });
+      self.postMessage({ type: 'DONE', payload: { left: r.left, right: r.right, rmsIn: r.rmsIn, rmsOut: r.rmsOut, backend: onGpu ? 'webgpu' : 'wasm', gpuFallbackReason } }, [r.left.buffer, r.right.buffer]);
     }
   } catch (err) {
     self.postMessage({ type: 'ERROR', payload: err && err.message ? err.message : String(err) });
@@ -4390,7 +4518,7 @@ async function decodeStereo44k(file) {
   } else if (nCh === 1) {
     left = decoded.getChannelData(0).slice(); right = left.slice();
   } else {                                          // 5.1 等：人聲多在中置聲道，只取前兩軌會漏掉，故全部降混（與辨識路徑同一份降混）
-    left = mixToMono(decoded); right = left.slice();
+    const mix = mixToMono(decoded); left = mix.slice(); right = mix.slice();   // 複本：要 transfer 給 Worker，不交出 AudioBuffer 自己的陣列
   }
   decoded = null;
   if (rate !== UVR_SR) [left, right] = await resampleChannels([left, right], rate, UVR_SR);
@@ -4523,7 +4651,11 @@ async function runVocalSeparation(file, { wantWav = true } = {}) {
 
     setProgress(53, '人聲分離：載入模型（首次較久）...', true);
     const threads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 2) : 1;
-    await workerCall(worker, 'INIT', { model, threads }, 'READY', 300_000, { transfer: [model] });
+    const tryGpu = isWebGPUSupported() && !_gpuFailedModels.has(UVR_MODEL_NAME);
+    const ready = await workerCall(worker, 'INIT', { model, threads, gpu: tryGpu }, 'READY', 300_000, { transfer: [model] });
+    const initBackend = ready.payload?.backend ?? 'wasm';
+    if (tryGpu && ready.payload?.gpuFallbackReason) markGpuFailed(UVR_MODEL_NAME, ready.payload.gpuFallbackReason);
+    log(`人聲分離後端：${initBackend === 'webgpu' ? '⚡ WebGPU' : 'CPU（WASM）'}`, 'info');
 
     const gen = UVR_CFG.hop * (UVR_CFG.dimT - 1) - UVR_CFG.nFft, total = Math.max(1, Math.ceil(left.length / gen));
     log(`人聲分離：${formatEtaSec(left.length / UVR_SR)} 音訊，分 ${total} 段處理（每段約 ${(gen / UVR_SR).toFixed(1)} 秒）`, 'info');
@@ -4536,7 +4668,8 @@ async function runVocalSeparation(file, { wantWav = true } = {}) {
         setProgress(53 + 4 * done / tot, `人聲分離 ${done}/${tot} 段${remain}`);
       },
     });
-    const { left: vl, right: vr, rmsIn, rmsOut } = res.payload;
+    let { left: vl, right: vr, rmsIn, rmsOut } = res.payload;
+    if (initBackend === 'webgpu' && res.payload.backend !== 'webgpu') markGpuFailed(UVR_MODEL_NAME, res.payload.gpuFallbackReason ?? '推論失敗');
     worker.terminate(); worker = null;
 
     if (rmsIn > 1e-3 && rmsOut < rmsIn * UVR_MIN_VOCAL_RATIO) {
@@ -4544,6 +4677,7 @@ async function runVocalSeparation(file, { wantWav = true } = {}) {
     }
     const wavBlob = wantWav ? encodeWavPcm16(vl, vr, UVR_SR) : null;
     for (let i = 0; i < vl.length; i++) vl[i] = 0.5 * (vl[i] + vr[i]);        // 就地降混（WAV 已編碼完）
+    vr = null; res.payload.left = res.payload.right = null;                  // v24 r8：重取樣前先放掉右聲道（20 分鐘約 212 MB）
     const mono16k = (await resampleChannels([vl], UVR_SR, SR))[0];
     log(`✓ 人聲分離完成（${total} 段，耗時 ${formatEtaSec((performance.now() - t0) / 1000)}；人聲能量為原音的 ${(rmsOut / rmsIn * 100).toFixed(0)}%）`, 'ok');
     return { mono16k, wavBlob };
@@ -4589,6 +4723,15 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = [], opts =
   });
 
   try {
+    // 人聲分離（選用）：先去除背景音樂再辨識。回傳 null＝略過或失敗，沿用原始音訊（原因已寫入日誌）
+    // v24 r8：移到「載入 Whisper 模型」之前。人聲分離本身要 ~1 GB 以上（ORT session＋44.1 kHz 立體聲），
+    // 原本 Whisper 模型（large-v3-turbo 可達 1.6 GB）已先常駐，兩者疊加是整個流程的記憶體峰值；
+    // 先做人聲分離（其 Worker 結束即釋放），再載入 Whisper，首個檔案的峰值只剩兩者中較大的一個。
+    // 批次的第 2 個檔案起 Whisper 已在記憶體中，順序不影響。
+    let vocal = null;
+    if (document.getElementById('tog_uvr')?.checked) vocal = await runVocalSeparation(file, { wantWav: opts.wantVocalWav !== false });
+    if (isCancelled) throw new Error('CANCELLED');
+
     let worker = inferenceWorker ?? createWorker();
     inferenceWorker = worker;
 
@@ -4620,9 +4763,10 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = [], opts =
 
       const loadingModelId = selectedModel;  // 捕捉此次載入的目標模型 ID
       try {
-        await workerCall(worker, 'LOAD_MODEL', buildLoadModelPayload(loadingModelId, dtype), 'MODEL_READY', 600000);
+        worker = await loadModelOnWorker(worker, loadingModelId, dtype, {}, progressHandler);
       } finally {
         worker.removeEventListener('message', progressHandler);
+        inferenceWorker?.removeEventListener('message', progressHandler);
       }
       workerReady  = true;
       loadedModel  = loadingModelId;  // 記錄實際載入成功的模型 ID
@@ -4634,13 +4778,12 @@ async function runInference(file, resumeFromChunk = 0, resumeChunks = [], opts =
 
     if (isCancelled) throw new Error('CANCELLED');
 
-    // 人聲分離（選用）：先去除背景音樂再辨識。回傳 null＝略過或失敗，沿用原始音訊（原因已寫入日誌）
-    let vocal = null;
-    if (document.getElementById('tog_uvr')?.checked) vocal = await runVocalSeparation(file, { wantWav: opts.wantVocalWav !== false });
-    if (isCancelled) throw new Error('CANCELLED');
-
     setProgress(57, '解碼音訊...', true);
-    const { audio, monoSnapshot } = await decodeAudio(file, vocal?.mono16k ?? null);
+    // v24 r8：交出人聲音訊後立即解除 vocal 對它的參照。大檔會把音訊搬到 IndexedDB 並丟掉記憶體中的陣列，
+    // 但 vocal.mono16k 仍指向同一個陣列，會讓它在整個辨識期間無法回收（每小時音訊約 230 MB）。
+    const vocalMono = vocal?.mono16k ?? null;
+    if (vocal) vocal.mono16k = null;
+    const { audio, monoSnapshot } = await decodeAudio(file, vocalMono);
     const totalSec = (audio instanceof Float32Array ? audio.length : audio.totalSamples) / SR;
     log(`音訊解碼完成，長度：${totalSec.toFixed(1)}s`, 'ok');
 

@@ -17,7 +17,7 @@ export default defineConfig({
   workers: 1,
   webServer: servers,
   projects: [
-    { name: 'functional', testMatch: /(dist-csp|round9-regression|round10-defaults-and-dictionary|round11-.*|round12-.*|round1[34]-.*)\.spec\.ts/, timeout: 120_000 },
+    { name: 'functional', testMatch: /(dist-csp|round9-regression|round10-defaults-and-dictionary|round11-.*|round12-.*|round1[345]-.*)\.spec\.ts/, timeout: 120_000 },
     { name: 'perf', testMatch: /perf-.*\.spec\.ts/, timeout: 900_000,
       use: { launchOptions: { args: ['--enable-precise-memory-info'] } } },
     { name: 'network', testMatch: /preview-panel\.spec\.ts/, timeout: 180_000 },
