@@ -2150,7 +2150,9 @@ self.addEventListener('message', async (e) => {
         // 覆核 r1：下載／讀檔類錯誤（斷網、離線未快取、資料夾缺檔、空間不足、取消）與 GPU 無關，
         // 不可當成 GPU 失敗——否則本次工作階段永遠改走 CPU，且 WASM 需要另一組權重，離線時反而更糟。原錯誤直接拋出。
         const gm = String(gpuErr && gpuErr.message || gpuErr);
-        if (/fetch|network|offline|abort|quota|storage|404|not found|could not locate|unauthorized|ENOENT|load failed/i.test(gm)) throw gpuErr;
+        // 覆核 r2：只認「明確的網路／讀檔」字樣；不可用 storage／abort／not found 等寬鬆字，
+        // 否則 'maximum storage buffer binding size'、'Device lost: aborted'、'Kernel not found' 等真正的 GPU 錯誤會被誤放行。
+        if (/failed to fetch|fetch failed|networkerror|network error|net::ERR_|ERR_INTERNET|offline|\bHTTP\s*(4|5)\d\d\b|\b404\b|could not locate file|unauthorized|ENOENT|QuotaExceededError/i.test(gm)) throw gpuErr;
         throw new Error('GPU_LOAD_FAILED: ' + gm);
       }
       self.postMessage({ type: 'MODEL_READY', payload: { device } });

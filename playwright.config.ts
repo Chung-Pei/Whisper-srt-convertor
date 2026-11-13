@@ -6,11 +6,11 @@ import fs from 'fs';
 //   perf：長媒體與效能／記憶體（需 --enable-precise-memory-info；單工、長逾時）
 //   network：preview-panel.spec.ts（會下載真實模型，需要網路；沙盒無法執行）
 const servers = [
-  { command: 'npx serve -l 8080 .', url: 'http://localhost:8080/index.html', reuseExistingServer: true },
-  { command: 'npx serve -l 8082 tests/baseline/v23_2', url: 'http://localhost:8082/index.html', reuseExistingServer: true },
+  { command: 'npx serve -l 8080 .', url: 'http://localhost:8080/index.html', reuseExistingServer: true, timeout: 120_000 },
+  { command: 'npx serve -l 8082 tests/baseline/v23_2', url: 'http://localhost:8082/index.html', reuseExistingServer: true, timeout: 120_000 },
 ];
 if (fs.existsSync('dist/index.html')) {
-  servers.push({ command: 'npx serve dist -l 8081', url: 'http://localhost:8081/index.html', reuseExistingServer: true });
+  servers.push({ command: 'npx serve dist -l 8081', url: 'http://localhost:8081/index.html', reuseExistingServer: true, timeout: 120_000 });
 }
 
 export default defineConfig({

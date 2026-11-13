@@ -19,3 +19,6 @@ Thumbs.db
 
 # 建置產物（CI 產生，不進版控）
 dist/
+
+# 測試時產生的音訊樣本
+tests/fixtures/generated/

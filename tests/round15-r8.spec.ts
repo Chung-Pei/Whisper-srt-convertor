@@ -5,6 +5,7 @@
 //   R8-04  Whisper：WebGPU 建 session 失敗 → 終止 Worker、建新 Worker 以 WASM 重載，辨識照常完成
 //   R8-05  人聲分離在載入 Whisper 模型之前執行（首個檔案的記憶體峰值不疊加）
 //   R8-08  WebGPU 路徑的下載錯誤不當成 GPU 失敗（覆核 r1）
+//   R8-10  真正的 GPU 錯誤（含 storage／aborted／not found 字樣）仍改用 WASM（覆核 r2）
 //   R8-09  離線且本機無 Whisper 模型 → 人聲分離前即停止（覆核 r1）
 //   R8-06  UVR WebGPU：建 session 失敗／推論失敗／與 WASM 結果不一致 → 改回 WASM，結果與純 WASM 相同；一致時沿用 GPU
 //   R8-07  UVR：讀不出長度且檔案大於「長度上限 × 128 kbps」→ 略過，不解碼、不建 Worker
@@ -148,14 +149,13 @@ test('R8-04 Whisper：WebGPU 建 session 失敗 → 終止該 Worker、建新 Wo
   expect(await page.locator('#statModel').textContent()).toBe('CPU');
 });
 
-test('R8-08 Whisper：WebGPU 路徑遇到下載錯誤（Failed to fetch）→ 不視為 GPU 失敗、不標記、不改 WASM 重載；顯示原錯誤', async ({ page }) => {
-  test.setTimeout(120_000);
+async function gpuLoadError(page: Page, errExpr: string, expectFail: boolean) {
   const stubLib = `
     try { Object.defineProperty(WorkerNavigator.prototype, 'gpu', { get: () => ({ requestAdapter: async () => ({}) }), configurable: true }); } catch (_) {}
     export const env = {};
     export const ModelRegistry = { get_available_dtypes: async () => ['fp32', 'q8', 'q4'] };
     export async function pipeline(task, id, opts) {
-      if (opts.device === 'webgpu') throw new TypeError('Failed to fetch');
+      if (opts.device === 'webgpu') throw ${errExpr};
       const fn = async () => ({ chunks: [{ text: '測試', timestamp: [0, 1] }] });
       fn.dispose = async () => {};
       return fn;
@@ -181,12 +181,30 @@ test('R8-08 Whisper：WebGPU 路徑遇到下載錯誤（Failed to fetch）→ �
   await setToggles(page, [], ['tog_vad', 'tog_uvr', 'tog_diarization']);
   await page.locator('#fileInput').setInputFiles(SAMPLE_AUDIO);
   await page.locator('#startBtn').click();
-  await expect(page.locator('.batch-item.error')).toHaveCount(1, { timeout: 90_000 });
-  const r = await page.evaluate(() => ({ loads: (window as any).__loads, log: document.getElementById('logBox')!.textContent }));
+  if (expectFail) await expect(page.locator('.batch-item.error')).toHaveCount(1, { timeout: 90_000 });
+  else await expect(page.locator('.batch-item.done')).toHaveCount(1, { timeout: 90_000 });
+  return page.evaluate(() => ({ loads: (window as any).__loads, log: document.getElementById('logBox')!.textContent }));
+}
+
+test('R8-08 Whisper：WebGPU 路徑遇到下載錯誤（Failed to fetch）→ 不視為 GPU 失敗、不標記、不改 WASM 重載；顯示原錯誤', async ({ page }) => {
+  test.setTimeout(120_000);
+  const r = await gpuLoadError(page, "new TypeError('Failed to fetch')", true);
   expect(r.loads).toEqual([{ worker: 1, preferGpu: true }]);   // 沒有改用 WASM 重載
   expect(r.log).toContain('Failed to fetch');
   expect(r.log).not.toContain('顯示卡加速無法使用');
 });
+
+// 覆核 r2：真正的 GPU 錯誤訊息含 storage／aborted／not found 字樣，仍須當成 GPU 失敗並改用 WASM
+for (const msg of ['maximum storage buffer binding size exceeded', 'Device lost: aborted', 'Kernel not found for op MatMulNBits']) {
+  test(`R8-10 Whisper：WebGPU 錯誤「${msg}」→ 仍判為 GPU 失敗，改用 WASM 重載並完成`, async ({ page }) => {
+    test.setTimeout(120_000);
+    const r = await gpuLoadError(page, `new Error(${JSON.stringify(msg)})`, false);
+    expect(r.loads).toEqual([{ worker: 1, preferGpu: true }, { worker: 2, preferGpu: false }]);
+    expect(r.log).toContain('顯示卡加速無法使用');
+  });
+}
+
+
 
 // ── 共用：UVR 替身 ORT ───────────────────────────────────────────────
 type GpuMode = 'none' | 'ok' | 'create-fail' | 'run-fail' | 'mismatch';
